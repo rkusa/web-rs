@@ -21,7 +21,7 @@ macro_rules! combine {
 pub fn mount(path: &str, mw: Middleware) -> Middleware {
     let path = path.to_owned();
 
-    Box::new(move |mut req| {
+    Box::new(move |mut req, res| {
         if req.uri().path().starts_with(path.as_str()) {
             let uri_before = req.uri().clone();
 
@@ -52,18 +52,18 @@ pub fn mount(path: &str, mw: Middleware) -> Middleware {
 
             req.set_uri(new_uri);
 
-            resolve_result(mw(req), uri_before)
+            resolve_result(mw(req, res), uri_before)
         } else {
-            Next(req)
+            Next(req, res)
         }
     })
 }
 
 fn resolve_result(result: Respond, uri_before: Uri) -> Respond {
     match result {
-        Next(mut req) => {
+        Next(mut req, res) => {
             req.set_uri(uri_before);
-            Next(req)
+            Next(req, res)
         }
         Done(mut req, res) => {
             req.set_uri(uri_before);
@@ -81,6 +81,6 @@ mod tests {
     #[test]
     fn combine() {
         let mut app = App::new();
-        app.attach(combine!(|req| Next(req), |req| Next(req)));
+        app.attach(combine!(|req, res| Next(req, res), |req, res| Next(req, res)));
     }
 }

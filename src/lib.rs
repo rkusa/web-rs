@@ -17,7 +17,7 @@ use hyper::status::StatusCode;
 pub use error::Error;
 
 pub enum Respond {
-    Next(Request),
+    Next(Request, Response),
     Done(Request, Response),
     Async(Box<Future<Item = Respond, Error = Error>>),
 }
@@ -30,12 +30,12 @@ impl<F> From<F> for Respond
     }
 }
 
-pub type Middleware = Box<Fn(Request) -> Respond>;
+pub type Middleware = Box<Fn(Request, Response) -> Respond>;
 
 pub struct App(Rc<RefCell<Vec<Middleware>>>);
 
 impl<F> From<F> for Middleware
-    where F: 'static + Fn(Request) -> Respond
+    where F: 'static + Fn(Request, Response) -> Respond
 {
     fn from(middleware: F) -> Middleware {
         Box::new(middleware)
@@ -44,6 +44,7 @@ impl<F> From<F> for Middleware
 
 struct Execution {
     req: Option<Request>,
+    res: Option<Response>,
     pos: usize,
     middlewares: Rc<RefCell<Vec<Middleware>>>,
     curr: Option<Box<Future<Item = Respond, Error = Error>>>,
@@ -60,22 +61,23 @@ impl App {
         self.0.borrow_mut().push(middleware.into());
     }
 
-    fn execute(&self, req: Request) -> Execution {
+    fn execute(&self, req: Request, res: Response) -> Execution {
         Execution {
+            req: Some(req),
+            res: Some(res),
             pos: 0,
             middlewares: self.0.clone(),
             curr: None,
-            req: Some(req),
         }
     }
 
     pub fn middleware(self) -> Middleware {
-        Box::new(move |req| {
-            self.execute(req)
-                .map(|(req, res)| if let Some(res) = res {
+        Box::new(move |req, res| {
+            self.execute(req, res)
+                .map(|(req, res, handled)| if handled {
                          Respond::Done(req, res)
                      } else {
-                         Respond::Next(req)
+                         Respond::Next(req, res)
                      })
                 .into()
         })
@@ -83,7 +85,7 @@ impl App {
 }
 
 impl Future for Execution {
-    type Item = (Request, Option<Response>);
+    type Item = (Request, Response, bool);
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
@@ -97,18 +99,21 @@ impl Future for Execution {
             let mws = self.middlewares.borrow();
             if let Some(mw) = mws.get(self.pos) {
                 self.pos += 1;
-                mw(self.req.take().unwrap())
+                mw(self.req.take().unwrap(), self.res.take().unwrap())
             } else {
-                return Ok(Async::Ready((self.req.take().unwrap(), None)));
+                return Ok(Async::Ready((self.req.take().unwrap(),
+                                        self.res.take().unwrap(),
+                                        false)));
             }
         };
 
         match result {
-            Respond::Next(req) => {
+            Respond::Next(req, res) => {
                 self.req = Some(req);
+                self.res = Some(res);
                 self.poll()
             }
-            Respond::Done(req, res) => Ok(Async::Ready((req, Some(res)))),
+            Respond::Done(req, res) => Ok(Async::Ready((req, res, true))),
             Respond::Async(fut) => {
                 self.curr = Some(fut);
                 self.poll()
@@ -124,9 +129,12 @@ impl Service for App {
     type Future = Box<Future<Item = Self::Response, Error = Self::Error>>;
 
     fn call(&self, req: Self::Request) -> Self::Future {
-        let default = || Response::new().with_status(StatusCode::NotFound);
-        let resp = self.execute(req)
-            .map(|(_req, res)| res.unwrap_or_else(default))
+        let resp = self.execute(req, Response::default())
+            .map(|(_, res, handled)| if handled {
+                     res
+                 } else {
+                     Response::new().with_status(StatusCode::NotFound)
+                 })
             .or_else(|err| future::ok(err.into_response()));
         Box::new(resp)
     }
@@ -137,18 +145,19 @@ mod tests {
     use App;
     use Respond::*;
     use futures::Future;
-    use hyper::server::Request;
+    use hyper::server::{Request, Response};
     use hyper::{Method, Uri};
     use std::str::FromStr;
 
     #[test]
     fn it_works() {
         let mut app = App::new();
-        app.attach(|req| Next(req));
+        app.attach(|req, res| Next(req, res));
 
         let req = Request::new(Method::Get, Uri::from_str("http://localhost").unwrap());
-        let result = app.execute(req).wait();
-        assert!(result.unwrap().1.is_none());
+        let res = Response::default();
+        let result = app.execute(req, res).wait();
+        assert_eq!(result.unwrap().2, false);
     }
 
     #[test]
