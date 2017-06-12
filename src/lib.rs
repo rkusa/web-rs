@@ -1,6 +1,3 @@
-// TODOs:
-// - Error Handling
-
 extern crate ctx;
 extern crate futures;
 extern crate hyper;
@@ -11,10 +8,13 @@ pub use helper::*;
 
 use std::io;
 use std::sync::{Arc, Mutex};
+use std::net::SocketAddr;
 
-use ctx::{Context, background};
+use ctx::background;
+pub use ctx::Context;
 use futures::{future, Future, Poll, Async};
-use hyper::server::{Service, NewService, Request, Response};
+pub use hyper::server::{Request, Response};
+use hyper::server::{Service, NewService, Http, Server};
 use hyper::status::StatusCode;
 pub use error::Error;
 
@@ -23,6 +23,8 @@ pub enum Respond {
     Done(Request, Response, Context),
     Async(Box<Future<Item = Respond, Error = Error>>),
 }
+
+pub use Respond::*;
 
 impl<F> From<F> for Respond
     where F: Future<Item = Respond, Error = Error> + 'static
@@ -81,6 +83,10 @@ impl App {
                      })
                 .into()
         })
+    }
+
+    pub fn server(self, addr: &SocketAddr) -> Result<Server<App, hyper::Body>, hyper::Error> {
+        Http::new().bind(&addr, self)
     }
 }
 
