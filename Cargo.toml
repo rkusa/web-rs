@@ -6,3 +6,4 @@ authors = ["Markus Ast <m@rkusa.st>"]
 [dependencies]
 futures = "0.1"
 hyper = { git = "https://github.com/hyperium/hyper.git", branch = "master" }
+ctx = { path = "../ctx" }
