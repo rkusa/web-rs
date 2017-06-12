@@ -2,7 +2,7 @@ use std::error::Error as StdError;
 use std::fmt;
 
 use hyper::server::Response;
-use hyper::status::StatusCode;
+pub use hyper::status::StatusCode;
 
 #[derive(Debug)]
 pub enum Error {
@@ -13,7 +13,13 @@ pub enum Error {
 impl Error {
     pub fn into_response(self) -> Response {
         match self {
-            Error::Status(status) => Response::new().with_status(status),
+            Error::Status(status) => {
+                let mut res = Response::new().with_status(status);
+                if let Some(reason) = status.canonical_reason() {
+                    res.set_body(reason);
+                }
+                res
+            }
             Error::Response(resp) => resp,
         }
     }
@@ -35,4 +41,29 @@ impl StdError for Error {
             Error::Response(_) => "Error with response",
         }
     }
+}
+
+#[macro_export]
+macro_rules! ok {
+    ($cond:expr) => (
+        if !$cond {
+            return $crate::Respond::Error(
+                $crate::Error::Status($crate::error::StatusCode::BadRequest)
+            );
+        }
+    );
+    ($cond:expr, $status:expr) => (
+        if !$cond {
+            return $crate::Respond::Error($crate::Error::Status($status));
+        }
+    );
+    ($cond:expr, $status:expr, $($arg:tt)+) => (
+        if !$cond {
+            return $crate::Respond::Error(
+                $crate::Error::Response($crate::Response::new()
+                    .with_status($status)
+                    .with_body(format!($($arg)+)))
+            );
+        }
+    );
 }

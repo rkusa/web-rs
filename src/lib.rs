@@ -2,7 +2,7 @@ extern crate ctx;
 extern crate futures;
 extern crate hyper;
 
-mod error;
+pub mod error;
 mod helper;
 pub use helper::*;
 
@@ -22,6 +22,7 @@ pub enum Respond {
     Next(Request, Response, Context),
     Done(Request, Response, Context),
     Async(Box<Future<Item = Respond, Error = Error>>),
+    Error(Error),
 }
 
 pub use Respond::*;
@@ -122,6 +123,7 @@ impl Future for Execution {
                 self.curr = Some(fut);
                 self.poll()
             }
+            Respond::Error(err) => Err(err),
         }
     }
 }
@@ -137,7 +139,7 @@ impl Service for App {
             .map(|(_, res, _, handled)| if handled {
                      res
                  } else {
-                     Response::new().with_status(StatusCode::NotFound)
+                     Error::Status(StatusCode::NotFound).into_response()
                  })
             .or_else(|err| future::ok(err.into_response()));
         Box::new(resp)
