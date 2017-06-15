@@ -67,3 +67,33 @@ macro_rules! ok {
         }
     );
 }
+
+#[macro_export]
+macro_rules! ok_some {
+    ($option:expr) => (
+        match $option {
+            Some(val) => val,
+            None => return $crate::Respond::Error(
+                $crate::Error::Status($crate::error::StatusCode::NotFound)
+            )
+        }
+    );
+    ($option:expr, $status:expr) => (
+        match $option {
+            Some(val) => val,
+            None => return $crate::Respond::Error(
+                $crate::Error::Status($status)
+            )
+        }
+    );
+    ($option:expr, $status:expr, $($arg:tt)+) => (
+        match $option {
+            Some(val) => val,
+            None => return $crate::Respond::Error(
+                $crate::Error::Response($crate::Response::new()
+                    .with_status($status)
+                    .with_body(format!($($arg)+)))
+            )
+        }
+    );
+}

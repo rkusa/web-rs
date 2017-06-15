@@ -6,15 +6,13 @@ pub mod error;
 mod helper;
 pub use helper::*;
 
-use std::io;
 use std::sync::{Arc, Mutex};
-use std::net::SocketAddr;
 
 use ctx::background;
 pub use ctx::Context;
 use futures::{future, Future, Poll, Async};
 pub use hyper::server::{Request, Response};
-use hyper::server::{Service, NewService, Http, Server};
+use hyper::server::Service;
 use hyper::status::StatusCode;
 pub use error::Error;
 
@@ -37,6 +35,7 @@ impl<F> From<F> for Respond
 
 pub type Middleware = Box<Fn(Request, Response, Context) -> Respond + Send>;
 
+#[derive(Clone)]
 pub struct App(Arc<Mutex<Vec<Middleware>>>);
 
 impl<F> From<F> for Middleware
@@ -59,6 +58,20 @@ impl App {
         App(Arc::new(Mutex::new(Vec::new())))
     }
 
+    pub fn handle(&self) -> Handle {
+        Handle {
+            app: self.clone(),
+            context: background(),
+        }
+    }
+
+    pub fn handle_with_context(&self, ctx: Context) -> Handle {
+        Handle {
+            app: self.clone(),
+            context: ctx,
+        }
+    }
+
     pub fn attach<F>(&mut self, middleware: F)
         where F: Into<Middleware>
     {
@@ -75,7 +88,7 @@ impl App {
     }
 
     pub fn middleware(self) -> Middleware {
-        Box::new(move |req, res, ctx| {
+        (move |req, res, ctx| {
             self.execute(req, res, ctx)
                 .map(|(req, res, ctx, handled)| if handled {
                          Respond::Done(req, res, ctx)
@@ -83,11 +96,7 @@ impl App {
                          Respond::Next(req, res, ctx)
                      })
                 .into()
-        })
-    }
-
-    pub fn server(self, addr: &SocketAddr) -> Result<Server<App, hyper::Body>, hyper::Error> {
-        Http::new().bind(&addr, self)
+        }).into()
     }
 }
 
@@ -128,14 +137,19 @@ impl Future for Execution {
     }
 }
 
-impl Service for App {
+pub struct Handle {
+    app: App,
+    context: Context,
+}
+
+impl Service for Handle {
     type Request = Request;
     type Response = Response;
     type Error = hyper::Error;
     type Future = Box<Future<Item = Self::Response, Error = Self::Error>>;
 
     fn call(&self, req: Self::Request) -> Self::Future {
-        let resp = self.execute(req, Response::default(), background())
+        let resp = self.app.execute(req, Response::default(), self.context.clone())
             .map(|(_, res, _, handled)| if handled {
                      res
                  } else {
@@ -143,17 +157,6 @@ impl Service for App {
                  })
             .or_else(|err| future::ok(err.into_response()));
         Box::new(resp)
-    }
-}
-
-impl NewService for App {
-    type Request = Request;
-    type Response = Response;
-    type Error = hyper::Error;
-    type Instance = App;
-
-    fn new_service(&self) -> Result<Self::Instance, io::Error> {
-        Ok(App(self.0.clone()))
     }
 }
 
