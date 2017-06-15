@@ -13,7 +13,7 @@ pub use ctx::Context;
 use futures::{future, Future, Poll, Async};
 pub use hyper::server::{Request, Response};
 use hyper::server::Service;
-use hyper::status::StatusCode;
+use hyper::StatusCode;
 pub use error::Error;
 
 pub enum Respond {

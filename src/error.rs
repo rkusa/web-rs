@@ -2,7 +2,7 @@ use std::error::Error as StdError;
 use std::fmt;
 
 use hyper::server::Response;
-pub use hyper::status::StatusCode;
+pub use hyper::StatusCode;
 
 #[derive(Debug)]
 pub enum Error {
