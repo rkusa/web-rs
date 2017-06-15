@@ -18,7 +18,7 @@ pub use error::Error;
 
 pub enum Respond {
     Next(Request, Response, Context),
-    Done(Request, Response, Context),
+    Done(Response),
     Async(Box<Future<Item = Respond, Error = Error>>),
     Error(Error),
 }
@@ -88,20 +88,26 @@ impl App {
     }
 
     pub fn middleware(self) -> Middleware {
-        (move |req, res, ctx| {
-            self.execute(req, res, ctx)
-                .map(|(req, res, ctx, handled)| if handled {
-                         Respond::Done(req, res, ctx)
-                     } else {
-                         Respond::Next(req, res, ctx)
-                     })
-                .into()
-        }).into()
+        (move |req, res, ctx| self.execute(req, res, ctx).map(|r| r.into()).into()).into()
+    }
+}
+
+enum Intermediate {
+    Next(Request, Response, Context),
+    Done(Response),
+}
+
+impl Into<Respond> for Intermediate {
+    fn into(self) -> Respond {
+        match self {
+            Intermediate::Done(res) => Respond::Done(res),
+            Intermediate::Next(req, res, ctx) => Respond::Next(req, res, ctx),
+        }
     }
 }
 
 impl Future for Execution {
-    type Item = (Request, Response, Context, bool);
+    type Item = Intermediate;
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
@@ -118,7 +124,7 @@ impl Future for Execution {
                 self.pos += 1;
                 mw(req, res, ctx)
             } else {
-                return Ok(Async::Ready((req, res, ctx, false)));
+                return Ok(Async::Ready(Intermediate::Next(req, res, ctx)));
             }
         };
 
@@ -127,7 +133,7 @@ impl Future for Execution {
                 self.args = Some((req, res, ctx));
                 self.poll()
             }
-            Respond::Done(req, res, ctx) => Ok(Async::Ready((req, res, ctx, true))),
+            Respond::Done(res) => Ok(Async::Ready(Intermediate::Done(res))),
             Respond::Async(fut) => {
                 self.curr = Some(fut);
                 self.poll()
@@ -149,11 +155,11 @@ impl Service for Handle {
     type Future = Box<Future<Item = Self::Response, Error = Self::Error>>;
 
     fn call(&self, req: Self::Request) -> Self::Future {
-        let resp = self.app.execute(req, Response::default(), self.context.clone())
-            .map(|(_, res, _, handled)| if handled {
-                     res
-                 } else {
-                     Error::Status(StatusCode::NotFound).into_response()
+        let resp = self.app
+            .execute(req, Response::default(), self.context.clone())
+            .map(|r| match r {
+                     Intermediate::Done(res) => res,
+                     _ => Error::Status(StatusCode::NotFound).into_response(),
                  })
             .or_else(|err| future::ok(err.into_response()));
         Box::new(resp)

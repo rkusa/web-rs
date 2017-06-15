@@ -65,10 +65,7 @@ fn resolve_result(result: Respond, uri_before: Uri) -> Respond {
             req.set_uri(uri_before);
             Next(req, res, ctx)
         }
-        Done(mut req, res, ctx) => {
-            req.set_uri(uri_before);
-            Done(req, res, ctx)
-        }
+        Done(res) => Done(res),
         Async(fut) => fut.map(|r| resolve_result(r, uri_before)).into(),
         Error(err) => Error(err),
     }

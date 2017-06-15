@@ -9,7 +9,7 @@ fn main() {
 
     app.attach(|req, _, ctx| {
                    let res = Response::new().with_body("Hello World!");
-                   Done(req, res, ctx)
+                   Done(res)
                });
 
     let addr = "127.0.0.1:3000".parse().unwrap();
