@@ -67,7 +67,7 @@ fn resolve_result(result: Respond, uri_before: Uri) -> Respond {
         }
         Done(res) => Done(res),
         Async(fut) => fut.map(|r| resolve_result(r, uri_before)).into(),
-        Error(err) => Error(err),
+        Throw(err) => Throw(err),
     }
 }
 

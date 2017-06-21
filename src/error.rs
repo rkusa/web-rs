@@ -5,41 +5,47 @@ use hyper::server::Response;
 pub use hyper::StatusCode;
 
 #[derive(Debug)]
-pub enum Error {
+pub enum HttpError {
     Status(StatusCode),
     Response(Response),
 }
 
-impl Error {
+impl HttpError {
     pub fn into_response(self) -> Response {
         match self {
-            Error::Status(status) => {
+            HttpError::Status(status) => {
                 let mut res = Response::new().with_status(status);
                 if let Some(reason) = status.canonical_reason() {
                     res.set_body(reason);
                 }
                 res
             }
-            Error::Response(resp) => resp,
+            HttpError::Response(resp) => resp,
         }
     }
 }
 
-impl fmt::Display for Error {
+impl fmt::Display for HttpError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            Error::Status(ref status) => write!(f, "Error with status: {}", status),
-            Error::Response(ref resp) => write!(f, "Error with response:\n{:?}", resp),
+            HttpError::Status(ref status) => write!(f, "Error with status: {}", status),
+            HttpError::Response(ref resp) => write!(f, "Error with response:\n{:?}", resp),
         }
     }
 }
 
-impl StdError for Error {
+impl StdError for HttpError {
     fn description(&self) -> &str {
         match *self {
-            Error::Status(_) => "Error with status code",
-            Error::Response(_) => "Error with response",
+            HttpError::Status(_) => "Error with status code",
+            HttpError::Response(_) => "Error with response",
         }
+    }
+}
+
+impl From<StatusCode> for HttpError {
+    fn from(status: StatusCode) -> Self {
+        HttpError::Status(status)
     }
 }
 
@@ -48,19 +54,19 @@ macro_rules! ok {
     ($cond:expr) => (
         if !$cond {
             return $crate::Respond::Error(
-                $crate::Error::Status($crate::error::StatusCode::BadRequest)
+                $crate::HttpError::Status($crate::error::StatusCode::BadRequest)
             );
         }
     );
     ($cond:expr, $status:expr) => (
         if !$cond {
-            return $crate::Respond::Error($crate::Error::Status($status));
+            return $crate::Respond::Error($crate::HttpError::Status($status));
         }
     );
     ($cond:expr, $status:expr, $($arg:tt)+) => (
         if !$cond {
             return $crate::Respond::Error(
-                $crate::Error::Response($crate::Response::new()
+                $crate::HttpError::Response($crate::Response::new()
                     .with_status($status)
                     .with_body(format!($($arg)+)))
             );
@@ -74,7 +80,7 @@ macro_rules! ok_some {
         match $option {
             Some(val) => val,
             None => return $crate::Respond::Error(
-                $crate::Error::Status($crate::error::StatusCode::NotFound)
+                $crate::HttpError::Status($crate::error::StatusCode::NotFound)
             )
         }
     );
@@ -82,7 +88,7 @@ macro_rules! ok_some {
         match $option {
             Some(val) => val,
             None => return $crate::Respond::Error(
-                $crate::Error::Status($status)
+                $crate::HttpError::Status($status)
             )
         }
     );
@@ -90,7 +96,7 @@ macro_rules! ok_some {
         match $option {
             Some(val) => val,
             None => return $crate::Respond::Error(
-                $crate::Error::Response($crate::Response::new()
+                $crate::HttpError::Response($crate::Response::new()
                     .with_status($status)
                     .with_body(format!($($arg)+)))
             )

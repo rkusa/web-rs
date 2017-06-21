@@ -14,19 +14,19 @@ use futures::{future, Future, Poll, Async};
 pub use hyper::server::{Request, Response};
 use hyper::server::Service;
 use hyper::StatusCode;
-pub use error::Error;
+pub use error::HttpError;
 
 pub enum Respond {
     Next(Request, Response, Context),
     Done(Response),
-    Async(Box<Future<Item = Respond, Error = Error>>),
-    Error(Error),
+    Async(Box<Future<Item = Respond, Error = HttpError>>),
+    Throw(HttpError),
 }
 
 pub use Respond::*;
 
 impl<F> From<F> for Respond
-    where F: Future<Item = Respond, Error = Error> + 'static
+    where F: Future<Item = Respond, Error = HttpError> + 'static
 {
     fn from(fut: F) -> Self {
         Respond::Async(Box::new(fut))
@@ -50,7 +50,7 @@ struct Execution {
     args: Option<(Request, Response, Context)>,
     pos: usize,
     middlewares: Arc<Mutex<Vec<Middleware>>>,
-    curr: Option<Box<Future<Item = Respond, Error = Error>>>,
+    curr: Option<Box<Future<Item = Respond, Error = HttpError>>>,
 }
 
 impl App {
@@ -108,7 +108,7 @@ impl Into<Respond> for Intermediate {
 
 impl Future for Execution {
     type Item = Intermediate;
-    type Error = Error;
+    type Error = HttpError;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         let result = if let Some(mut curr) = self.curr.take() {
@@ -138,7 +138,7 @@ impl Future for Execution {
                 self.curr = Some(fut);
                 self.poll()
             }
-            Respond::Error(err) => Err(err),
+            Respond::Throw(err) => Err(err),
         }
     }
 }
@@ -159,7 +159,7 @@ impl Service for Handle {
             .execute(req, Response::default(), self.context.clone())
             .map(|r| match r {
                      Intermediate::Done(res) => res,
-                     _ => Error::Status(StatusCode::NotFound).into_response(),
+                     _ => HttpError::Status(StatusCode::NotFound).into_response(),
                  })
             .or_else(|err| future::ok(err.into_response()));
         Box::new(resp)
