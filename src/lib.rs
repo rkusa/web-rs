@@ -114,7 +114,10 @@ impl Future for Execution {
         let result = if let Some(mut curr) = self.curr.take() {
             match curr.poll() {
                 Ok(Async::Ready(result)) => result,
-                Ok(Async::NotReady) => return Ok(Async::NotReady),
+                Ok(Async::NotReady) => {
+                    self.curr = Some(curr);
+                    return Ok(Async::NotReady)
+                },
                 Err(err) => return Err(err),
             }
         } else {

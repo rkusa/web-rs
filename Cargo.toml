@@ -7,3 +7,6 @@ authors = ["Markus Ast <m@rkusa.st>"]
 futures = "0.1"
 hyper = "0.11"
 ctx = { path = "../ctx" }
+
+[dev-dependencies]
+tokio-timer = "0.1"
