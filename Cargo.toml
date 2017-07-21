@@ -4,9 +4,9 @@ version = "0.1.0"
 authors = ["Markus Ast <m@rkusa.st>"]
 
 [dependencies]
+ctx = "0.2"
 futures = "0.1"
 hyper = "0.11"
-ctx = { path = "../ctx" }
 
 [dev-dependencies]
 tokio-timer = "0.1"
