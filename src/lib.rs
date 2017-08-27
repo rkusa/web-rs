@@ -1,171 +1,233 @@
 extern crate ctx;
 extern crate futures;
+extern crate futures_cpupool;
 extern crate hyper;
 
 pub mod error;
-mod helper;
-pub use helper::*;
+// mod helper;
+// pub use helper::*;
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
-use ctx::background;
+// use ctx::background;
 pub use ctx::Context;
-use futures::{future, Future, Poll, Async};
+use futures_cpupool::{CpuPool, CpuFuture};
 pub use hyper::server::{Request, Response};
 use hyper::server::Service;
-use hyper::StatusCode;
+// use hyper::StatusCode;
 pub use error::HttpError;
+use std::ops::Deref;
 
 pub enum Respond {
     Next(Request, Response, Context),
     Done(Response),
-    Async(Box<Future<Item = Respond, Error = HttpError>>),
-    Throw(HttpError),
 }
 
 pub use Respond::*;
 
-impl<F> From<F> for Respond
-    where F: Future<Item = Respond, Error = HttpError> + 'static
+impl From<(Request, Response, Context)> for Respond {
+    fn from(args: (Request, Response, Context)) -> Self {
+        Respond::Next(args.0, args.1, args.2)
+    }
+}
+
+impl From<Response> for Respond {
+    fn from(res: Response) -> Self {
+        Respond::Done(res)
+    }
+}
+
+pub type WebResult = Result<Respond, HttpError>;
+
+pub trait Middleware: Send + Sync {
+    fn handle(&self, Request, Response, Context) -> WebResult;
+    fn after(&self) {}
+}
+
+impl Middleware for Box<Middleware> {
+    fn handle(&self, req: Request, res: Response, ctx: Context) -> WebResult {
+        self.deref().handle(req, res, ctx)
+    }
+
+    fn after(&self) {
+        self.deref().after()
+    }
+}
+
+pub struct FnMiddleware<F>
+where
+    F: Fn(Request, Response, Context) -> WebResult + Send + Sync,
 {
-    fn from(fut: F) -> Self {
-        Respond::Async(Box::new(fut))
-    }
+    func: F,
 }
 
-pub type Middleware = Box<Fn(Request, Response, Context) -> Respond + Send>;
-
-#[derive(Clone)]
-pub struct App(Arc<Mutex<Vec<Middleware>>>);
-
-impl<F> From<F> for Middleware
-    where F: Fn(Request, Response, Context) -> Respond + Send + 'static
-{
-    fn from(middleware: F) -> Middleware {
-        Box::new(middleware)
-    }
-}
-
-struct Execution {
-    args: Option<(Request, Response, Context)>,
-    pos: usize,
-    middlewares: Arc<Mutex<Vec<Middleware>>>,
-    curr: Option<Box<Future<Item = Respond, Error = HttpError>>>,
-}
-
-impl App {
-    pub fn new() -> Self {
-        App(Arc::new(Mutex::new(Vec::new())))
-    }
-
-    pub fn handle(&self) -> Handle {
-        Handle {
-            app: self.clone(),
-            context: background(),
-        }
-    }
-
-    pub fn handle_with_context(&self, ctx: Context) -> Handle {
-        Handle {
-            app: self.clone(),
-            context: ctx,
-        }
-    }
-
-    pub fn attach<F>(&mut self, middleware: F)
-        where F: Into<Middleware>
+impl<F> FnMiddleware<F> where
+    F: Fn(Request, Response, Context) -> WebResult + Send + Sync,
     {
-        self.0.lock().unwrap().push(middleware.into());
+    pub fn new(f: F) -> Self {
+        FnMiddleware{ func: f}
     }
+}
 
-    fn execute(&self, req: Request, res: Response, ctx: Context) -> Execution {
-        Execution {
-            args: Some((req, res, ctx)),
-            pos: 0,
-            middlewares: self.0.clone(),
-            curr: None,
+impl<F> Middleware for FnMiddleware<F>
+where
+    F: Fn(Request, Response, Context) -> WebResult
+        + Send
+        + Sync,
+{
+    fn handle(&self, req: Request, res: Response, ctx: Context) -> WebResult {
+        (self.func)(req, res, ctx)
+    }
+}
+
+impl<F> From<F> for Box<Middleware>
+where
+    F: 'static
+        + Fn(Request, Response, Context) -> WebResult
+        + Send
+        + Sync,
+{
+    fn from(f: F) -> Self {
+        Box::new(FnMiddleware { func: f })
+    }
+}
+
+pub struct App<F>
+where
+    F: Fn() -> Context + Send + 'static,
+{
+    middlewares: Arc<RwLock<Vec<Box<Middleware>>>>,
+    pool: CpuPool,
+    context: Arc<Mutex<F>>,
+}
+
+impl<F> Clone for App<F>
+where
+    F: Fn() -> Context + Send + 'static,
+{
+    fn clone(&self) -> Self {
+        App {
+            middlewares: self.middlewares.clone(),
+            pool: self.pool.clone(),
+            context: self.context.clone(),
+        }
+    }
+}
+
+impl<F> App<F>
+where
+    F: Fn() -> Context + Send + 'static,
+{
+    pub fn new(ctx: F) -> Self {
+        App {
+            middlewares: Arc::new(RwLock::new(Vec::new())),
+            pool: CpuPool::new(32),
+            context: Arc::new(Mutex::new(ctx)),
         }
     }
 
-    pub fn middleware(self) -> Middleware {
-        (move |req, res, ctx| self.execute(req, res, ctx).map(|r| r.into()).into()).into()
+    pub fn attach<M>(&mut self, middleware: M)
+    where
+        M: Middleware + 'static,
+    {
+        self.middlewares.write().unwrap().push(Box::new(middleware));
+    }
+
+    pub fn handler<T>(&mut self, handler: T)
+    where
+        T: 'static + Fn(Request, Response, Context) -> WebResult + Send + Sync,
+    {
+        self.middlewares.write().unwrap().push(
+            Box::new(FnMiddleware {
+                func: handler,
+            }),
+        );
     }
 }
 
-enum Intermediate {
-    Next(Request, Response, Context),
-    Done(Response),
-}
+impl<F> Middleware for App<F>
+where
+    F: Fn() -> Context + Send + 'static,
+{
+    fn handle(&self, req: Request, res: Response, ctx: Context) -> WebResult {
+        let middlewares = self.middlewares.read().unwrap();
+        let mut iter = middlewares.iter();
 
-impl Into<Respond> for Intermediate {
-    fn into(self) -> Respond {
-        match self {
-            Intermediate::Done(res) => Respond::Done(res),
-            Intermediate::Next(req, res, ctx) => Respond::Next(req, res, ctx),
-        }
-    }
-}
+        let mut res = res;
+        let mut req_ctx = Some((req, ctx));
 
-impl Future for Execution {
-    type Item = Intermediate;
-    type Error = HttpError;
-
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        let result = if let Some(mut curr) = self.curr.take() {
-            match curr.poll() {
-                Ok(Async::Ready(result)) => result,
-                Ok(Async::NotReady) => {
-                    self.curr = Some(curr);
-                    return Ok(Async::NotReady)
+        while let Some(mw) = iter.next() {
+            let (req, ctx) = req_ctx.take().unwrap();
+            match mw.handle(req, res, ctx) {
+                Ok(Next(rq, rs, cx)) => {
+                    res = rs;
+                    req_ctx = Some((rq, cx));
+                },
+                Ok(Done(rs)) => {
+                    res = rs;
+                    break;
                 },
                 Err(err) => return Err(err),
             }
-        } else {
-            let mws = self.middlewares.lock().unwrap();
-            let (req, res, ctx) = self.args.take().unwrap();
-            if let Some(mw) = mws.get(self.pos) {
-                self.pos += 1;
-                mw(req, res, ctx)
-            } else {
-                return Ok(Async::Ready(Intermediate::Next(req, res, ctx)));
-            }
-        };
+        }
 
-        match result {
-            Respond::Next(req, res, ctx) => {
-                self.args = Some((req, res, ctx));
-                self.poll()
-            }
-            Respond::Done(res) => Ok(Async::Ready(Intermediate::Done(res))),
-            Respond::Async(fut) => {
-                self.curr = Some(fut);
-                self.poll()
-            }
-            Respond::Throw(err) => Err(err),
+        while let Some(mw) = iter.next_back() {
+            mw.after();
+        }
+
+        if let Some((req, ctx)) = req_ctx.take() {
+            Ok(Next(req, res, ctx))
+        } else {
+            Ok(Done(res))
         }
     }
 }
 
-pub struct Handle {
-    app: App,
-    context: Context,
-}
-
-impl Service for Handle {
+impl<F> Service for App<F>
+where
+    F: Fn() -> Context + Send + 'static,
+{
     type Request = Request;
     type Response = Response;
     type Error = hyper::Error;
-    type Future = Box<Future<Item = Self::Response, Error = Self::Error>>;
+    type Future = CpuFuture<Self::Response, Self::Error>;
 
     fn call(&self, req: Self::Request) -> Self::Future {
-        let resp = self.app
-            .execute(req, Response::default(), self.context.clone())
-            .map(|r| match r {
-                     Intermediate::Done(res) => res,
-                     _ => HttpError::Status(StatusCode::NotFound).into_response(),
-                 })
-            .or_else(|err| future::ok(err.into_response()));
-        Box::new(resp)
+        let ctx = self.context.clone();
+        let middlewares = self.middlewares.clone();
+        self.pool.spawn_fn(move || {
+            let ctx = (ctx.lock().unwrap())();
+            let mut res = Response::default();
+            let middlewares = middlewares.read().unwrap();
+            let mut iter = middlewares.iter();
+
+            let mut req_ctx = Some((req, ctx));
+
+            while let Some(mw) = iter.next() {
+                let (req, ctx) = req_ctx.take().unwrap();
+                match mw.handle(req, res, ctx) {
+                    Ok(Next(rq, rs, cx)) => {
+                        res = rs;
+                        req_ctx = Some((rq, cx));
+                    },
+                    Ok(Done(rs)) => {
+                        res = rs;
+                        break;
+                    },
+                    Err(err) => {
+                        res = err.into_response();
+                        break;
+                    },
+                }
+            }
+
+            while let Some(mw) = iter.next_back() {
+                mw.after();
+            }
+
+            // self.execute(req, res, ctx);
+            Ok(res)
+        })
     }
 }
 
@@ -173,26 +235,25 @@ impl Service for Handle {
 mod tests {
     use ctx::background;
     use App;
-    use Respond::*;
-    use futures::Future;
-    use hyper::server::{Request, Response};
-    use hyper::{Method, Uri};
-    use std::str::FromStr;
+    // use hyper::server::{Request, Response};
+    // use hyper::{Method, Uri};
+    // use std::str::FromStr;
 
     #[test]
-    fn it_works() {
-        let mut app = App::new();
-        app.attach(|req, res, ctx| Next(req, res, ctx));
+    fn handler() {
+        let mut app = App::new(|| background());
+        app.handler(|_req, _res, _ctx| Ok(None));
 
-        let req = Request::new(Method::Get, Uri::from_str("http://localhost").unwrap());
-        let res = Response::default();
-        let result = app.execute(req, res, background()).wait();
-        assert_eq!(result.unwrap().3, false);
+        // let req = Request::new(Method::Get, Uri::from_str("http://localhost").unwrap());
+        // let res = Response::default();
+        // let result = app.handle(&req, &res, background());
+        // assert_eq!(result.unwrap().3, false);
     }
 
     #[test]
     fn middleware() {
-        let mut app = App::new();
-        app.attach(App::new().middleware());
+        let mut app1 = App::new(|| background());
+        let app2 = App::new(|| background());
+        app1.attach(app2);
     }
 }

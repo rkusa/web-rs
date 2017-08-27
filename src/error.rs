@@ -53,19 +53,19 @@ impl From<StatusCode> for HttpError {
 macro_rules! ok {
     ($cond:expr) => (
         if !$cond {
-            return $crate::Respond::Throw(
+            return Err(
                 $crate::HttpError::Status($crate::error::StatusCode::BadRequest)
             );
         }
     );
     ($cond:expr, $status:expr) => (
         if !$cond {
-            return $crate::Respond::Throw($crate::HttpError::Status($status));
+            return Err($crate::HttpError::Status($status));
         }
     );
     ($cond:expr, $status:expr, $($arg:tt)+) => (
         if !$cond {
-            return $crate::Respond::Throw(
+            return Err(
                 $crate::HttpError::Response($crate::Response::new()
                     .with_status($status)
                     .with_body(format!($($arg)+)))
@@ -79,7 +79,7 @@ macro_rules! ok_some {
     ($option:expr) => (
         match $option {
             Some(val) => val,
-            None => return $crate::Respond::Throw(
+            None => return Err(
                 $crate::HttpError::Status($crate::error::StatusCode::NotFound)
             )
         }
@@ -87,7 +87,7 @@ macro_rules! ok_some {
     ($option:expr, $status:expr) => (
         match $option {
             Some(val) => val,
-            None => return $crate::Respond::Throw(
+            None => return Err(
                 $crate::HttpError::Status($status)
             )
         }
@@ -95,7 +95,7 @@ macro_rules! ok_some {
     ($option:expr, $status:expr, $($arg:tt)+) => (
         match $option {
             Some(val) => val,
-            None => return $crate::Respond::Throw(
+            None => return Err(
                 $crate::HttpError::Response($crate::Response::new()
                     .with_status($status)
                     .with_body(format!($($arg)+)))

@@ -79,7 +79,9 @@ mod tests {
     #[test]
     fn combine() {
         let mut app = App::new();
-        app.attach(combine!(|req, res, ctx| Next(req, res, ctx),
-                            |req, res, ctx| Next(req, res, ctx)));
+        app.attach(combine!(
+            |req, res, ctx| Next(req, res, ctx),
+            |req, res, ctx| Next(req, res, ctx)
+        ));
     }
 }
