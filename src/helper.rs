@@ -2,27 +2,30 @@ use std::str::FromStr;
 
 use futures::Future;
 use hyper::Uri;
-use {Middleware, Respond};
+use {Middleware, next, Request, Response, Context, WebFuture};
 use Respond::*;
 
 #[macro_export]
 macro_rules! combine {
     ( $( $x:expr ),* ) => {
         {
-            let mut app = App::new();
+            let mut app = App::new(|| $crate::ctx::background());
             $(
-                app.attach($x);
+                app.add($x);
             )*
-            app.middleware()
+            app
         }
     };
 }
 
-pub fn mount(path: &str, mw: Middleware) -> Middleware {
-    let path = path.to_owned();
+pub struct MountMiddleware<M: Middleware> {
+    path: String,
+    middleware: M,
+}
 
-    Box::new(move |mut req, res, ctx| {
-        if req.uri().path().starts_with(path.as_str()) {
+impl<M> Middleware for MountMiddleware<M> where M: Middleware {
+    fn handle(&self, mut req: Request, res: Response, ctx: Context) -> WebFuture {
+        if req.uri().path().starts_with(self.path.as_str()) {
             let uri_before = req.uri().clone();
 
             // TODO: extend hyper to not have to create a URI from string
@@ -36,7 +39,7 @@ pub fn mount(path: &str, mw: Middleware) -> Middleware {
                     s += authority;
                 }
 
-                let (_, mut new_path) = uri_before.path().split_at(path.len());
+                let (_, mut new_path) = uri_before.path().split_at(self.path.len());
                 if new_path.len() == 0 {
                     new_path = "/";
                 }
@@ -52,36 +55,44 @@ pub fn mount(path: &str, mw: Middleware) -> Middleware {
 
             req.set_uri(new_uri);
 
-            resolve_result(mw(req, res, ctx), uri_before)
+            Box::new(self.middleware.handle(req, res, ctx).map(|r| {
+                match r {
+                    Next(mut req, res, ctx) => {
+                        req.set_uri(uri_before);
+                        Next(req, res, ctx)
+                    },
+                    _ => r
+                }
+            }))
         } else {
-            Next(req, res, ctx)
+            next(req, res, ctx)
         }
-    })
+    }
+
+    fn after(&self) {
+        // TODO: ONLY WHEN ACTUALLY CALLED
+        self.middleware.after()
+    }
 }
 
-fn resolve_result(result: Respond, uri_before: Uri) -> Respond {
-    match result {
-        Next(mut req, res, ctx) => {
-            req.set_uri(uri_before);
-            Next(req, res, ctx)
-        }
-        Done(res) => Done(res),
-        Async(fut) => fut.map(|r| resolve_result(r, uri_before)).into(),
-        Throw(err) => Throw(err),
-    }
+pub fn mount<M: Middleware>(path: &str, mw: M) -> MountMiddleware<M> {
+    MountMiddleware{ path: path.to_owned(), middleware: mw }
 }
 
 #[cfg(test)]
 mod tests {
+    use ctx::background;
     use App;
-    use Respond::*;
 
     #[test]
     fn combine() {
-        let mut app = App::new();
-        app.attach(combine!(
-            |req, res, ctx| Next(req, res, ctx),
-            |req, res, ctx| Next(req, res, ctx)
+        let mut app = App::new(|| background());
+        app.add(combine!(
+            |req, res, ctx| Ok((req, res, ctx)),
+            |req, res, ctx| Ok((req, res, ctx))
         ));
     }
+
+    // TODO: test mount
+    // TODO: test mount after
 }

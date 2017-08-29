@@ -6,8 +6,7 @@ extern crate futures;
 
 use ctx::background;
 use web::*;
-use hyper::server::Http;
-use hyper::StatusCode;
+use hyper::server::{Http, Response};
 use tokio_timer::Timer;
 use std::time::Duration;
 use futures::future::Future;
@@ -15,16 +14,16 @@ use futures::future::Future;
 fn main() {
     let mut app = App::new(|| background());
 
-    app.handler(|_req, mut res, _ctx| {
+    app.add(|_req, mut res: Response, _ctx| {
       let timer = Timer::default();
 
       // Set a timeout that expires in 500 milliseconds
       let sleep = timer.sleep(Duration::from_millis(100));
-      sleep.wait();
+      sleep.wait().unwrap();
 
       res.set_body("Hello World!");
-      Ok(None)
-    }.into());
+      Ok(res)
+    });
 
     let addr = "127.0.0.1:3000".parse().unwrap();
     // let addr = ([127, 0, 0, 1], 3000).into();

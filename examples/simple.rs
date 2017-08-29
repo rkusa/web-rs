@@ -4,16 +4,16 @@ extern crate hyper;
 
 use ctx::background;
 use web::*;
-use hyper::server::Http;
+use hyper::server::{Http, Response};
 
 fn main() {
     let mut app = App::new(|| background());
 
-    app.handler(|_req, mut res, _ctx| {
+    app.add(|_req, mut res: Response, _ctx| {
       res.set_body("Hello World!");
       // Ok(Some(ctx))
-      Ok(None)
-    }.into());
+      Ok(res)
+    });
 
     let addr = "127.0.0.1:3000".parse().unwrap();
     // let addr = ([127, 0, 0, 1], 3000).into();
