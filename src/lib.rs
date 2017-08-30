@@ -8,7 +8,7 @@ pub mod error;
 mod helper;
 pub use helper::*;
 
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 pub use ctx::Context;
 use futures_cpupool::CpuPool;
@@ -96,35 +96,22 @@ where
     }
 }
 
-pub struct App<F>
+pub struct AppBuilder<F>
 where
     F: Fn() -> Context + Send,
 {
-    middlewares: Arc<RwLock<Vec<Box<Middleware>>>>,
+    middlewares: Vec<Box<Middleware>>,
     pool: CpuPool,
     context_factory: Arc<F>,
 }
 
-impl<F> Clone for App<F>
-where
-    F: Fn() -> Context + Send,
-{
-    fn clone(&self) -> Self {
-        App {
-            middlewares: self.middlewares.clone(),
-            pool: self.pool.clone(),
-            context_factory: self.context_factory.clone(),
-        }
-    }
-}
-
-impl<F> App<F>
+impl<F> AppBuilder<F>
 where
     F: Fn() -> Context + Send + Sync,
 {
     pub fn new(ctx: F) -> Self {
-        App {
-            middlewares: Arc::new(RwLock::new(Vec::new())),
+        AppBuilder {
+            middlewares: Vec::new(),
             pool: CpuPool::new(32),
             context_factory: Arc::new(ctx),
         }
@@ -134,7 +121,7 @@ where
     where
         M: Middleware + 'static,
     {
-        self.middlewares.write().unwrap().push(Box::new(middleware));
+        self.middlewares.push(Box::new(middleware));
     }
 
     // TODO: better name
@@ -158,6 +145,45 @@ where
             pool: self.pool.clone(),
             mw: Arc::new(middleware),
         }
+    }
+
+    pub fn build(self) -> App<F> {
+        App {
+            middlewares: Arc::new(self.middlewares),
+            pool: self.pool,
+            context_factory: self.context_factory,
+        }
+    }
+}
+
+pub struct App<F>
+where
+    F: Fn() -> Context + Send,
+{
+    middlewares: Arc<Vec<Box<Middleware>>>,
+    pool: CpuPool,
+    context_factory: Arc<F>,
+}
+
+impl<F> Clone for App<F>
+where
+    F: Fn() -> Context + Send,
+{
+    fn clone(&self) -> Self {
+        App {
+            middlewares: self.middlewares.clone(),
+            pool: self.pool.clone(),
+            context_factory: self.context_factory.clone(),
+        }
+    }
+}
+
+impl<F> App<F>
+where
+    F: Fn() -> Context + Send + Sync,
+{
+    pub fn new(ctx: F) -> AppBuilder<F> {
+        AppBuilder::new(ctx)
     }
 
     fn execute(&self, req: Request, res: Response, ctx: Context) -> Execution {
@@ -201,15 +227,14 @@ where
 struct Execution {
     args: Option<(Request, Response, Context)>,
     pos: usize,
-    middlewares: Arc<RwLock<Vec<Box<Middleware>>>>,
+    middlewares: Arc<Vec<Box<Middleware>>>,
     curr: Option<WebFuture>,
 }
 
 impl Execution {
     fn after(&self, res: &Response) {
-        let mws = self.middlewares.read().unwrap();
         for i in (0..self.pos).rev() {
-            if let Some(mw) = mws.get(i) {
+            if let Some(mw) = self.middlewares.get(i) {
                 mw.after(&res);
             }
         }
@@ -246,9 +271,8 @@ impl Future for Execution {
             }
         } else {
             self.curr = {
-                let mws = self.middlewares.read().unwrap();
                 let (req, res, ctx) = self.args.take().unwrap();
-                if let Some(mw) = mws.get(self.pos) {
+                if let Some(mw) = self.middlewares.get(self.pos) {
                     self.pos += 1;
                     Some(mw.handle(req, res, ctx))
                 } else {
@@ -343,7 +367,7 @@ mod tests {
     fn chain_middleware() {
         let mut app1 = App::new(|| background());
         let app2 = App::new(|| background());
-        app1.add(app2);
+        app1.add(app2.build());
     }
 
     #[test]
@@ -369,7 +393,7 @@ mod tests {
 
         let req = Request::new(Method::Get, Uri::from_str("http://localhost").unwrap());
         let res = Response::default();
-        app.execute(req, res, background()).wait().unwrap();
+        app.build().execute(req, res, background()).wait().unwrap();
 
         assert_eq!(*called.lock().unwrap(), true);
     }
@@ -397,7 +421,7 @@ mod tests {
 
         let req = Request::new(Method::Get, Uri::from_str("http://localhost").unwrap());
         let res = Response::default();
-        app.execute(req, res, background()).wait().unwrap();
+        app.build().execute(req, res, background()).wait().unwrap();
 
         assert_eq!(*called.lock().unwrap(), true);
     }
@@ -445,7 +469,7 @@ mod tests {
 
         let req = Request::new(Method::Get, Uri::from_str("http://localhost").unwrap());
         let res = Response::default();
-        app.execute(req, res, background()).wait().unwrap();
+        app.build().execute(req, res, background()).wait().unwrap();
 
         assert_eq!(*first.lock().unwrap(), true);
         assert_eq!(*second.lock().unwrap(), true);
@@ -487,7 +511,7 @@ mod tests {
 
         let req = Request::new(Method::Get, Uri::from_str("http://localhost/foo/bar").unwrap());
         let res = Response::default();
-        app.execute(req, res, background()).wait().unwrap();
+        app.build().execute(req, res, background()).wait().unwrap();
 
         assert_eq!(*call_order.lock().unwrap(), vec![4, 3, 2, 1]);
     }

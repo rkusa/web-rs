@@ -25,6 +25,8 @@ fn main() {
       Ok(res)
     });
 
+    let app = app.build();
+
     let addr = "127.0.0.1:3000".parse().unwrap();
     // let addr = ([127, 0, 0, 1], 3000).into();
 

@@ -14,7 +14,7 @@ macro_rules! combine {
             $(
                 app.add($x);
             )*
-            app
+            app.build()
         }
     };
 }
@@ -123,7 +123,7 @@ mod tests {
 
         let req = Request::new(Method::Get, Uri::from_str("http://localhost/test").unwrap());
         let res = Response::default();
-        app.execute(req, res, background()).wait().unwrap();
+        app.build().execute(req, res, background()).wait().unwrap();
 
         assert_eq!(*called.lock().unwrap(), true);
     }
@@ -153,7 +153,7 @@ mod tests {
 
         let req = Request::new(Method::Get, Uri::from_str("http://localhost/bar").unwrap());
         let res = Response::default();
-        app.execute(req, res, background()).wait().unwrap();
+        app.build().execute(req, res, background()).wait().unwrap();
 
         assert_eq!(*first.lock().unwrap(), false);
         assert_eq!(*second.lock().unwrap(), true);
