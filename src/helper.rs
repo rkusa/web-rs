@@ -9,6 +9,7 @@ use Respond::*;
 macro_rules! combine {
     ( $( $x:expr ),* ) => {
         {
+            // TODO: share CPU Pool?
             let mut app = App::new(|| $crate::ctx::background());
             $(
                 app.add($x);
@@ -85,8 +86,13 @@ pub fn mount<M: Middleware>(path: &str, mw: M) -> MountMiddleware<M> {
 
 #[cfg(test)]
 mod tests {
-    use ctx::background;
-    use App;
+    use ctx::{background, Context};
+    use {App, next, WebFuture, Middleware, mount};
+    use hyper::{Request, Response};
+    use hyper::{Method, Uri};
+    use std::str::FromStr;
+    use futures::Future;
+    use std::sync::{Arc, Mutex};
 
     #[test]
     fn combine() {
@@ -97,6 +103,59 @@ mod tests {
         ));
     }
 
-    // TODO: test mount
-    // TODO: test mount after
+    #[test]
+    fn mount_middleware() {
+        struct TestMiddleware {
+            called: Arc<Mutex<bool>>,
+        }
+
+        impl Middleware for TestMiddleware {
+            fn handle(&self, req: Request, res: Response, ctx: Context) -> WebFuture {
+                *self.called.lock().unwrap() = true;
+                next(req, res, ctx)
+            }
+        }
+
+        let called = Arc::new(Mutex::new(false));
+
+        let mut app = App::new(|| background());
+        app.add(mount("/test", TestMiddleware { called: called.clone() }));
+
+        let req = Request::new(Method::Get, Uri::from_str("http://localhost/test").unwrap());
+        let res = Response::default();
+        app.execute(req, res, background()).wait().unwrap();
+
+        assert_eq!(*called.lock().unwrap(), true);
+    }
+
+    #[test]
+    fn mount_middleware_after() {
+        struct TestMiddleware {
+            called: Arc<Mutex<bool>>,
+        }
+
+        impl Middleware for TestMiddleware {
+            fn handle(&self, req: Request, res: Response, ctx: Context) -> WebFuture {
+                next(req, res, ctx)
+            }
+
+            fn after(&self, _res: &Response) {
+                *self.called.lock().unwrap() = true;
+            }
+        }
+
+        let first = Arc::new(Mutex::new(false));
+        let second = Arc::new(Mutex::new(false));
+
+        let mut app = App::new(|| background());
+        app.add(mount("/foo", TestMiddleware { called: first.clone() }));
+        app.add(mount("/bar", TestMiddleware { called: second.clone() }));
+
+        let req = Request::new(Method::Get, Uri::from_str("http://localhost/bar").unwrap());
+        let res = Response::default();
+        app.execute(req, res, background()).wait().unwrap();
+
+        assert_eq!(*first.lock().unwrap(), false);
+        assert_eq!(*second.lock().unwrap(), true);
+    }
 }

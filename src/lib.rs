@@ -4,6 +4,7 @@ extern crate futures_cpupool;
 extern crate hyper;
 
 pub mod error;
+#[macro_use]
 mod helper;
 pub use helper::*;
 
@@ -11,7 +12,7 @@ use std::sync::{Arc, RwLock};
 
 pub use ctx::Context;
 use futures_cpupool::CpuPool;
-pub use hyper::{Request, Response};
+pub use hyper::{Request, Response, Body};
 use hyper::server::Service;
 use hyper::StatusCode;
 pub use error::HttpError;
@@ -37,6 +38,14 @@ impl From<Response> for Respond {
     }
 }
 
+impl<B> From<(Response, B)> for Respond where B: Into<Body> {
+    fn from(args: (Response, B)) -> Self {
+        let (mut res, body) = args;
+        res.set_body(body);
+        Respond::Done(res)
+    }
+}
+
 pub type WebFuture = Box<Future<Item = Respond, Error = HttpError> + Send>;
 
 pub fn next(req: Request, res: Response, ctx: Context) -> WebFuture {
@@ -49,7 +58,7 @@ pub fn done(res: Response) -> WebFuture {
 
 pub trait Middleware: Send + Sync {
     fn handle(&self, Request, Response, Context) -> WebFuture;
-    fn after(&self) {}
+    fn after(&self, _res: &Response) {}
 }
 
 impl Middleware for Box<Middleware> {
@@ -57,8 +66,8 @@ impl Middleware for Box<Middleware> {
         self.deref().handle(req, res, ctx)
     }
 
-    fn after(&self) {
-        self.deref().after()
+    fn after(&self, res: &Response) {
+        self.deref().after(res)
     }
 }
 
@@ -129,13 +138,25 @@ where
     }
 
     // TODO: better name
-    pub fn offload<M>(&mut self, middleware: M) -> SyncMiddleware<M>
+    pub fn add_sync<M>(&mut self, middleware: M)
+    where
+        M: Middleware + 'static,
+    {
+        let pool = self.pool.clone();
+        self.add(SyncMiddleware {
+            pool: pool,
+            mw: Arc::new(middleware),
+        });
+    }
+
+    // TODO: better name
+    pub fn offload<M>(&self, middleware: M) -> SyncMiddleware<M>
     where
         M: Middleware + 'static,
     {
         SyncMiddleware {
             pool: self.pool.clone(),
-            mw: middleware,
+            mw: Arc::new(middleware),
         }
     }
 
@@ -160,19 +181,20 @@ where
 
 pub struct SyncMiddleware<M: Middleware> {
     pool: CpuPool,
-    mw: M,
+    mw: Arc<M>,
 }
 
 impl<M> Middleware for SyncMiddleware<M>
 where
-    M: Middleware,
+    M: Middleware + 'static,
 {
     fn handle(&self, req: Request, res: Response, ctx: Context) -> WebFuture {
-        Box::new(self.pool.spawn(self.mw.handle(req, res, ctx)))
+        let mw = self.mw.clone();
+        Box::new(self.pool.spawn_fn(move || mw.handle(req, res, ctx)))
     }
 
-    fn after(&self) {
-        self.mw.after()
+    fn after(&self, res: &Response) {
+        self.mw.after(res)
     }
 }
 
@@ -183,28 +205,45 @@ struct Execution {
     curr: Option<WebFuture>,
 }
 
+impl Execution {
+    fn after(&self, res: &Response) {
+        let mws = self.middlewares.read().unwrap();
+        for i in (0..self.pos).rev() {
+            if let Some(mw) = mws.get(i) {
+                mw.after(&res);
+            }
+        }
+    }
+}
+
 impl Future for Execution {
     type Item = Respond;
     type Error = HttpError;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         if let Some(mut curr) = self.curr.take() {
-            let result = curr.poll();
-            match result {
-                Ok(Async::Ready(_)) => {
-                    let mws = self.middlewares.read().unwrap();
-                    for i in (0..self.pos+1).rev() {
-                        if let Some(mw) = mws.get(i) {
-                            mw.after();
+            match curr.poll() {
+                Ok(Async::Ready(r)) => {
+                    match r {
+                        Next(req, res, ctx) => {
+                            self.args = Some((req, res, ctx));
+                            self.poll()
+                        }
+                        Done(res) => {
+                            self.after(&res);
+                            Ok(Async::Ready(Done(res)))
                         }
                     }
                 }
                 Ok(Async::NotReady) => {
                     self.curr = Some(curr);
+                    Ok(Async::NotReady)
                 }
-                _ => {}
+                Err(err) => {
+                    // TODO: after?
+                    Err(err)
+                },
             }
-            result
         } else {
             self.curr = {
                 let mws = self.middlewares.read().unwrap();
@@ -213,6 +252,7 @@ impl Future for Execution {
                     self.pos += 1;
                     Some(mw.handle(req, res, ctx))
                 } else {
+                    self.after(&res);
                     return Ok(Async::Ready(Next(req, res, ctx)));
                 }
             };
@@ -245,7 +285,7 @@ where
 #[cfg(test)]
 mod tests {
     use ctx::{Context, background};
-    use {App, next, done, WebFuture, Middleware};
+    use {App, next, done, WebFuture, Middleware, mount};
     use hyper::{Request, Response};
     use hyper::{Method, Uri};
     use std::str::FromStr;
@@ -272,7 +312,7 @@ mod tests {
         }
 
         let mut app = App::new(|| background());
-        app.add(TestMiddleware{});
+        app.add(TestMiddleware {});
     }
 
     #[test]
@@ -289,17 +329,14 @@ mod tests {
     #[test]
     fn end_with_done() {
         let mut app = App::new(|| background());
-        app.add(|_, res, _| {
-            Ok(res)
-        });
+        app.add(|_, res, _| Ok(res));
+        app.add(|_, res, _| Ok((res, "Hello World")));
     }
 
     #[test]
     fn end_with_next() {
         let mut app = App::new(|| background());
-        app.add(|req, res, ctx| {
-            Ok((req, res, ctx))
-        });
+        app.add(|req, res, ctx| Ok((req, res, ctx)));
     }
 
     #[test]
@@ -310,7 +347,63 @@ mod tests {
     }
 
     #[test]
-    fn before() {
+    fn after_done() {
+        struct TestMiddleware {
+            called: Arc<Mutex<bool>>,
+        }
+
+        impl Middleware for TestMiddleware {
+            fn handle(&self, _req: Request, res: Response, _ctx: Context) -> WebFuture {
+                done(res)
+            }
+
+            fn after(&self, _res: &Response) {
+                *self.called.lock().unwrap() = true;
+            }
+        }
+
+        let called = Arc::new(Mutex::new(false));
+
+        let mut app = App::new(|| background());
+        app.add(TestMiddleware { called: called.clone() });
+
+        let req = Request::new(Method::Get, Uri::from_str("http://localhost").unwrap());
+        let res = Response::default();
+        app.execute(req, res, background()).wait().unwrap();
+
+        assert_eq!(*called.lock().unwrap(), true);
+    }
+
+    #[test]
+    fn after_next() {
+        struct TestMiddleware {
+            called: Arc<Mutex<bool>>,
+        }
+
+        impl Middleware for TestMiddleware {
+            fn handle(&self, req: Request, res: Response, ctx: Context) -> WebFuture {
+                next(req, res, ctx)
+            }
+
+            fn after(&self, _res: &Response) {
+                *self.called.lock().unwrap() = true;
+            }
+        }
+
+        let called = Arc::new(Mutex::new(false));
+
+        let mut app = App::new(|| background());
+        app.add(TestMiddleware { called: called.clone() });
+
+        let req = Request::new(Method::Get, Uri::from_str("http://localhost").unwrap());
+        let res = Response::default();
+        app.execute(req, res, background()).wait().unwrap();
+
+        assert_eq!(*called.lock().unwrap(), true);
+    }
+
+    #[test]
+    fn after_until_done() {
         struct ContinueMiddleware {
             after_called: Arc<Mutex<bool>>,
         }
@@ -320,7 +413,7 @@ mod tests {
                 next(req, res, ctx)
             }
 
-            fn after(&self) {
+            fn after(&self, _res: &Response) {
                 *self.after_called.lock().unwrap() = true;
             }
         }
@@ -334,7 +427,7 @@ mod tests {
                 done(res)
             }
 
-            fn after(&self) {
+            fn after(&self, _res: &Response) {
                 *self.after_called.lock().unwrap() = true;
             }
         }
@@ -342,11 +435,13 @@ mod tests {
         let first = Arc::new(Mutex::new(false));
         let second = Arc::new(Mutex::new(false));
         let third = Arc::new(Mutex::new(false));
+        let fourth = Arc::new(Mutex::new(false));
 
         let mut app = App::new(|| background());
-        app.add(ContinueMiddleware{after_called: first.clone()});
-        app.add(DoneMiddleware{after_called: second.clone()});
-        app.add(DoneMiddleware{after_called: third.clone()});
+        app.add(ContinueMiddleware { after_called: first.clone() });
+        app.add(ContinueMiddleware { after_called: second.clone() });
+        app.add(DoneMiddleware { after_called: third.clone() });
+        app.add(DoneMiddleware { after_called: fourth.clone() });
 
         let req = Request::new(Method::Get, Uri::from_str("http://localhost").unwrap());
         let res = Response::default();
@@ -354,6 +449,46 @@ mod tests {
 
         assert_eq!(*first.lock().unwrap(), true);
         assert_eq!(*second.lock().unwrap(), true);
-        assert_eq!(*third.lock().unwrap(), false);
+        assert_eq!(*third.lock().unwrap(), true);
+        assert_eq!(*fourth.lock().unwrap(), false);
+    }
+
+    #[test]
+    fn after_until_done_nested() {
+        struct TestMiddleware {
+            id: usize,
+            call_order: Arc<Mutex<Vec<usize>>>,
+        }
+
+        impl Middleware for TestMiddleware {
+            fn handle(&self, req: Request, res: Response, ctx: Context) -> WebFuture {
+                if self.id == 4 {
+                    done(res)
+                } else {
+                    next(req, res, ctx)
+                }
+            }
+
+            fn after(&self, _res: &Response) {
+                self.call_order.lock().unwrap().push(self.id);
+            }
+        }
+
+        let call_order = Arc::new(Mutex::new(Vec::new()));
+        let mut app = App::new(|| background());
+        app.add(TestMiddleware { id: 1, call_order: call_order.clone() });
+        app.add(mount("/foo", combine!(
+            TestMiddleware { id: 2, call_order: call_order.clone() },
+            TestMiddleware { id: 3, call_order: call_order.clone() },
+            mount("/bar", TestMiddleware { id: 4, call_order: call_order.clone() }),
+            TestMiddleware { id: 5, call_order: call_order.clone() }
+        )));
+        app.add(TestMiddleware { id: 6, call_order: call_order.clone() });
+
+        let req = Request::new(Method::Get, Uri::from_str("http://localhost/foo/bar").unwrap());
+        let res = Response::default();
+        app.execute(req, res, background()).wait().unwrap();
+
+        assert_eq!(*call_order.lock().unwrap(), vec![4, 3, 2, 1]);
     }
 }
