@@ -23,7 +23,10 @@ pub struct MountMiddleware<M: Middleware> {
     middleware: M,
 }
 
-impl<M> Middleware for MountMiddleware<M> where M: Middleware {
+impl<M> Middleware for MountMiddleware<M>
+where
+    M: Middleware,
+{
     fn handle(&self, mut req: Request, res: Response, ctx: Context) -> WebFuture {
         if req.uri().path().starts_with(self.path.as_str()) {
             let uri_before = req.uri().clone();
@@ -55,28 +58,29 @@ impl<M> Middleware for MountMiddleware<M> where M: Middleware {
 
             req.set_uri(new_uri);
 
-            Box::new(self.middleware.handle(req, res, ctx).map(|r| {
-                match r {
-                    Next(mut req, res, ctx) => {
-                        req.set_uri(uri_before);
-                        Next(req, res, ctx)
-                    },
-                    _ => r
+            Box::new(self.middleware.handle(req, res, ctx).map(|r| match r {
+                Next(mut req, res, ctx) => {
+                    req.set_uri(uri_before);
+                    Next(req, res, ctx)
                 }
+                _ => r,
             }))
         } else {
             next(req, res, ctx)
         }
     }
 
-    fn after(&self) {
+    fn after(&self, res: &Response) {
         // TODO: ONLY WHEN ACTUALLY CALLED
-        self.middleware.after()
+        self.middleware.after(res)
     }
 }
 
 pub fn mount<M: Middleware>(path: &str, mw: M) -> MountMiddleware<M> {
-    MountMiddleware{ path: path.to_owned(), middleware: mw }
+    MountMiddleware {
+        path: path.to_owned(),
+        middleware: mw,
+    }
 }
 
 #[cfg(test)]
