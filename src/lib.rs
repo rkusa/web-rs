@@ -38,7 +38,10 @@ impl From<Response> for Respond {
     }
 }
 
-impl<B> From<(Response, B)> for Respond where B: Into<Body> {
+impl<B> From<(Response, B)> for Respond
+where
+    B: Into<Body>,
+{
     fn from(args: (Response, B)) -> Self {
         let (mut res, body) = args;
         res.set_body(body);
@@ -267,7 +270,7 @@ impl Future for Execution {
                 Err(err) => {
                     // TODO: after?
                     Err(err)
-                },
+                }
             }
         } else {
             self.curr = {
@@ -500,16 +503,43 @@ mod tests {
 
         let call_order = Arc::new(Mutex::new(Vec::new()));
         let mut app = App::new(|| background());
-        app.add(TestMiddleware { id: 1, call_order: call_order.clone() });
-        app.add(mount("/foo", combine!(
-            TestMiddleware { id: 2, call_order: call_order.clone() },
-            TestMiddleware { id: 3, call_order: call_order.clone() },
-            mount("/bar", TestMiddleware { id: 4, call_order: call_order.clone() }),
-            TestMiddleware { id: 5, call_order: call_order.clone() }
-        )));
-        app.add(TestMiddleware { id: 6, call_order: call_order.clone() });
+        app.add(TestMiddleware {
+            id: 1,
+            call_order: call_order.clone(),
+        });
+        app.add(mount(
+            "/foo",
+            combine!(
+                TestMiddleware {
+                    id: 2,
+                    call_order: call_order.clone(),
+                },
+                TestMiddleware {
+                    id: 3,
+                    call_order: call_order.clone(),
+                },
+                mount(
+                    "/bar",
+                    TestMiddleware {
+                        id: 4,
+                        call_order: call_order.clone(),
+                    },
+                ),
+                TestMiddleware {
+                    id: 5,
+                    call_order: call_order.clone(),
+                }
+            ),
+        ));
+        app.add(TestMiddleware {
+            id: 6,
+            call_order: call_order.clone(),
+        });
 
-        let req = Request::new(Method::Get, Uri::from_str("http://localhost/foo/bar").unwrap());
+        let req = Request::new(
+            Method::Get,
+            Uri::from_str("http://localhost/foo/bar").unwrap(),
+        );
         let res = Response::default();
         app.build().execute(req, res, background()).wait().unwrap();
 

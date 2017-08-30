@@ -10,9 +10,9 @@ fn main() {
     let mut app = App::new(|| background());
 
     app.add(|_req, mut res: Response, _ctx| {
-      res.set_body("Hello World!");
-      // Ok(Some(ctx))
-      Ok(res)
+        res.set_body("Hello World!");
+        // Ok(Some(ctx))
+        Ok(res)
     });
 
     let app = app.build();
@@ -21,6 +21,9 @@ fn main() {
     // let addr = ([127, 0, 0, 1], 3000).into();
 
     let server = Http::new().bind(&addr, move || Ok(app.clone())).unwrap();
-    println!("Listening on http://{} with 1 thread.", server.local_addr().unwrap());
+    println!(
+        "Listening on http://{} with 1 thread.",
+        server.local_addr().unwrap()
+    );
     server.run().unwrap();
 }
