@@ -2,22 +2,17 @@ extern crate ctx;
 extern crate web;
 extern crate hyper;
 
-use std::thread;
 use ctx::background;
 use web::*;
 use hyper::server::{Http, Response};
-use std::time::Duration;
 
 fn main() {
     let mut app = App::new(|| background());
 
-    let sync = app.offload(|_req, mut res: Response, _ctx, _next| {
-        thread::sleep(Duration::from_millis(1000));
-
+    app.add(|_req, mut res: Response, _ctx, _next| {
         res.set_body("Hello World!");
         Ok(res)
     });
-    app.add(sync);
 
     let app = app.build();
 

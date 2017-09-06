@@ -9,9 +9,8 @@ use hyper::server::{Http, Response};
 fn main() {
     let mut app = App::new(|| background());
 
-    app.add(|_req, mut res: Response, _ctx| {
+    app.add(|_, mut res: Response, _, _| {
         res.set_body("Hello World!");
-        // Ok(Some(ctx))
         Ok(res)
     });
 

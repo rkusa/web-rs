@@ -14,7 +14,7 @@ use futures::future::Future;
 fn main() {
     let mut app = App::new(|| background());
 
-    app.add(|_req, mut res: Response, _ctx| {
+    app.add(|_req, mut res: Response, _ctx, _next| {
         let timer = Timer::default();
 
         // Set a timeout that expires in 500 milliseconds
