@@ -1,35 +1,35 @@
 extern crate ctx;
-extern crate web;
+extern crate futures;
 extern crate hyper;
 extern crate tokio_timer;
-extern crate futures;
+extern crate web;
 
 use ctx::background;
-use web::*;
-use hyper::server::{Http, Response};
-use tokio_timer::Timer;
-use std::time::Duration;
 use futures::future::Future;
+use hyper::server::{Http, Response};
+use hyper::StatusCode;
+use std::time::Duration;
+use tokio_timer::Timer;
+use web::*;
 
 fn main() {
     let mut app = App::new(|| background());
 
     app.add(|_req, mut res: Response, _ctx, _next| {
-        let timer = Timer::default();
-
         // Set a timeout that expires in 500 milliseconds
+        let timer = Timer::default();
         let sleep = timer.sleep(Duration::from_millis(100));
-        sleep.wait().unwrap();
 
-        res.set_body("Hello World!");
-        Ok(res)
+        sleep
+            .map_err(|_| StatusCode::RequestTimeout.into())
+            .and_then(|_| {
+                res.set_body("Hello World!");
+                Ok(res)
+            })
     });
 
     let app = app.build();
-
-    let addr = "127.0.0.1:3000".parse().unwrap();
-    // let addr = ([127, 0, 0, 1], 3000).into();
-
+    let addr = ([127, 0, 0, 1], 3000).into();
     let server = Http::new().bind(&addr, move || Ok(app.clone())).unwrap();
     println!(
         "Listening on http://{} with 1 thread.",

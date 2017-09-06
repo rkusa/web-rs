@@ -8,7 +8,7 @@ extern crate hyper;
 use std::boxed::FnBox;
 use std::sync::Arc;
 
-pub use ctx::Context;
+pub use ctx::{Context, background};
 pub use hyper::{Request, Response, Body};
 use futures_cpupool::CpuPool;
 use futures::{future, Future, IntoFuture};
@@ -80,7 +80,7 @@ where
 {
     middlewares: Vec<Box<Middleware>>,
     pool: CpuPool,
-    context_factory: Arc<F>,
+    state: Arc<F>,
 }
 
 impl<F> AppBuilder<F>
@@ -91,7 +91,7 @@ where
         AppBuilder {
             middlewares: Vec::new(),
             pool: CpuPool::new(32),
-            context_factory: Arc::new(ctx),
+            state: Arc::new(ctx),
         }
     }
 
@@ -102,19 +102,6 @@ where
         self.middlewares.push(Box::new(middleware));
     }
 
-    // TODO: better name
-    pub fn add_sync<M>(&mut self, middleware: M)
-    where
-        M: Middleware + 'static,
-    {
-        let pool = self.pool.clone();
-        self.add(SyncMiddleware {
-            pool: pool,
-            mw: Arc::new(middleware),
-        });
-    }
-
-    // TODO: better name
     pub fn offload<M>(&self, middleware: M) -> SyncMiddleware<M>
     where
         M: Middleware + 'static,
@@ -129,7 +116,7 @@ where
         App {
             middlewares: Arc::new(self.middlewares),
             pool: self.pool,
-            context_factory: self.context_factory,
+            state: self.state,
         }
     }
 }
@@ -140,7 +127,7 @@ where
 {
     middlewares: Arc<Vec<Box<Middleware>>>,
     pool: CpuPool,
-    context_factory: Arc<F>,
+    state: Arc<F>,
 }
 
 impl<F> Clone for App<F>
@@ -151,7 +138,7 @@ where
         App {
             middlewares: self.middlewares.clone(),
             pool: self.pool.clone(),
-            context_factory: self.context_factory.clone(),
+            state: self.state.clone(),
         }
     }
 }
@@ -250,7 +237,7 @@ where
     type Future = Box<Future<Item = Self::Response, Error = Self::Error>>;
 
     fn call(&self, req: Self::Request) -> Self::Future {
-        let ctx = (self.context_factory)();
+        let ctx = (self.state)();
         let resp = self.execute(req, Response::default(), ctx, default_fallback)
             .or_else(|err| future::ok(err.into_response()));
         Box::new(resp)
