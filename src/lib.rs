@@ -151,7 +151,7 @@ where
         AppBuilder::new(ctx)
     }
 
-    fn execute<N>(&self, req: Request, res: Response, ctx: Context, next: N) -> WebFuture
+    pub fn execute<N>(&self, req: Request, res: Response, ctx: Context, next: N) -> WebFuture
     where
         N: FnOnce(Request, Response, Context) -> WebFuture + Send + 'static,
     {
