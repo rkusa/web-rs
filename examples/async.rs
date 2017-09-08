@@ -13,7 +13,7 @@ use tokio_timer::Timer;
 use web::*;
 
 fn main() {
-    let mut app = App::new(|| background());
+    let mut app = App::new();
 
     app.add(|_req, mut res: Response, _ctx, _next| {
         // Set a timeout that expires in 100 milliseconds
@@ -30,7 +30,9 @@ fn main() {
 
     let app = app.build();
     let addr = ([127, 0, 0, 1], 3000).into();
-    let server = Http::new().bind(&addr, move || Ok(app.clone())).unwrap();
+    let server = Http::new()
+        .bind(&addr, move || Ok(app.handle(|| background())))
+        .unwrap();
     println!(
         "Listening on http://{} with 1 thread.",
         server.local_addr().unwrap()

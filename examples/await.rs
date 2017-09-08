@@ -21,7 +21,7 @@ fn handler(_: Request, mut res: Response, _: Context, _: Next) -> Result<Respons
     let sleep = timer.sleep(Duration::from_millis(100));
 
     if let Err(_) = await!(sleep) {
-        return Err(StatusCode::RequestTimeout.into())
+        return Err(StatusCode::RequestTimeout.into());
     }
 
     res.set_body("Hello World!");
@@ -29,13 +29,15 @@ fn handler(_: Request, mut res: Response, _: Context, _: Next) -> Result<Respons
 }
 
 fn main() {
-    let mut app = App::new(|| background());
+    let mut app = App::new();
 
     app.add(handler);
 
     let app = app.build();
     let addr = ([127, 0, 0, 1], 3000).into();
-    let server = Http::new().bind(&addr, move || Ok(app.clone())).unwrap();
+    let server = Http::new()
+        .bind(&addr, move || Ok(app.handle(|| background())))
+        .unwrap();
     println!(
         "Listening on http://{} with 1 thread.",
         server.local_addr().unwrap()

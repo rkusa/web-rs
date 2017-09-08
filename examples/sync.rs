@@ -1,27 +1,41 @@
 extern crate ctx;
-extern crate web;
+extern crate futures;
+extern crate futures_cpupool;
 extern crate hyper;
+extern crate web;
 
-use ctx::background;
+use ctx::{background, with_value};
 use hyper::server::{Http, Response};
 use std::thread;
 use std::time::Duration;
 use web::*;
+use futures_cpupool::CpuPool;
+use futures::future::Future;
 
 fn main() {
-    let mut app = App::new(|| background());
+    let pool = CpuPool::new(32);
+    let mut app = App::new();
 
-    let sync = app.offload(|_req, mut res: Response, _ctx, _next| {
-        thread::sleep(Duration::from_millis(1000));
+    app.add(|_req, mut res: Response, ctx: Context, _next| {
+        let pool = ctx.value::<CpuPool>().unwrap();
 
-        res.set_body("Hello World!");
-        Ok(res)
+        pool.spawn_fn(|| {
+            thread::sleep(Duration::from_millis(1000));
+            Ok(())
+        }).and_then(|_| {
+                res.set_body("Hello World!");
+                Ok(res)
+            })
     });
-    app.add(sync);
 
     let app = app.build();
     let addr = "127.0.0.1:3000".parse().unwrap();
-    let server = Http::new().bind(&addr, move || Ok(app.clone())).unwrap();
+    let server = Http::new()
+        .bind(&addr, move || {
+            let pool = pool.clone();
+            Ok(app.handle(move || with_value(background(), pool.clone())))
+        })
+        .unwrap();
     println!(
         "Listening on http://{} with 1 thread.",
         server.local_addr().unwrap()

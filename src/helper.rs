@@ -1,14 +1,14 @@
 use std::str::FromStr;
 
 use hyper::Uri;
-use {Middleware, Request, Response, Context, WebFuture, Next};
+use {Context, Middleware, Next, Request, Response, WebFuture};
 
 #[macro_export]
 macro_rules! combine {
     ( $( $x:expr ),* ) => {
         {
             // TODO: share CPU Pool?
-            let mut app = App::new(|| $crate::ctx::background());
+            let mut app = App::new();
             $(
                 app.add($x);
             )*
@@ -82,7 +82,7 @@ pub fn mount<M: Middleware>(path: &str, mw: M) -> MountMiddleware<M> {
 #[cfg(test)]
 mod tests {
     use ctx::background;
-    use {App, mount, default_fallback};
+    use {default_fallback, mount, App};
     use hyper::{Request, Response};
     use hyper::{Method, Uri};
     use std::str::FromStr;
@@ -91,7 +91,7 @@ mod tests {
 
     #[test]
     fn combine() {
-        let mut app = App::new(|| background());
+        let mut app = App::new();
         app.add(combine!(|_, res, _, _| Ok(res), |_, res, _, _| Ok(res)));
     }
 
@@ -100,7 +100,7 @@ mod tests {
         let called = Arc::new(Mutex::new(false));
 
         let app = {
-            let mut app = App::new(|| background());
+            let mut app = App::new();
             let called = called.clone();
             app.add(mount("/foo", move |_, res, _, _| {
                 *called.lock().unwrap() = true;
@@ -124,7 +124,7 @@ mod tests {
         let called = Arc::new(Mutex::new(false));
 
         let app = {
-            let mut app = App::new(|| background());
+            let mut app = App::new();
             let called = called.clone();
             app.add(mount("/foo", move |_, res, _, _| {
                 *called.lock().unwrap() = true;
