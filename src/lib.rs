@@ -125,7 +125,7 @@ impl App {
 
     pub fn handle<F>(&self, state: F) -> Handle<F>
     where
-        F: Send + Sync + Fn() -> Context,
+        F: Fn() -> Context,
     {
         Handle {
             app: self.clone(),
@@ -181,7 +181,7 @@ impl Next {
 
 pub struct Handle<F>
 where
-    F: Sync + Fn() -> Context,
+    F: Fn() -> Context,
 {
     app: App,
     state: Arc<F>,
@@ -189,7 +189,7 @@ where
 
 impl<F> Clone for Handle<F>
 where
-    F: Sync + Fn() -> Context,
+    F: Fn() -> Context,
 {
     fn clone(&self) -> Self {
         Handle {
@@ -201,7 +201,7 @@ where
 
 impl<F> Service for Handle<F>
 where
-    F: Sync + Fn() -> Context,
+    F: Fn() -> Context,
 {
     type Request = Request;
     type Response = Response;
