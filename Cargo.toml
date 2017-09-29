@@ -4,7 +4,8 @@ version = "0.1.0"
 authors = ["Markus Ast <m@rkusa.st>"]
 
 [dependencies]
-ctx = { git = "https://github.com/rkusa/ctx.git" }
+# ctx = { git = "https://github.com/rkusa/ctx.git" }
+ctx = { path = "../ctx" }
 futures = "0.1"
 hyper = "0.11"
 

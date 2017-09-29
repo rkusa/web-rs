@@ -1,6 +1,7 @@
 use std::error::Error as StdError;
 use std::fmt;
 
+use ctx::ContextError;
 use hyper::server::Response;
 pub use hyper::StatusCode;
 
@@ -46,6 +47,18 @@ impl StdError for HttpError {
 impl From<StatusCode> for HttpError {
     fn from(status: StatusCode) -> Self {
         HttpError::Status(status)
+    }
+}
+
+impl From<ContextError> for HttpError {
+    fn from(err: ContextError) -> Self {
+        match err {
+            // TODO: which status code?
+            ContextError::Canceled => HttpError::Status(StatusCode::Gone),
+            ContextError::DeadlineExceeded => HttpError::Status(StatusCode::RequestTimeout),
+            // TODO: give a hint that this is not rly a timeout?
+            ContextError::DeadlineTooLong => HttpError::Status(StatusCode::RequestTimeout),
+        }
     }
 }
 

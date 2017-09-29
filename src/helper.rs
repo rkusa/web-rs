@@ -1,7 +1,7 @@
 use std::str::FromStr;
 
 use hyper::Uri;
-use {Context, Middleware, Next, Request, Response, WebFuture};
+use {Middleware, Next, Request, Response, WebFuture};
 
 #[macro_export]
 macro_rules! combine {
@@ -17,16 +17,17 @@ macro_rules! combine {
     };
 }
 
-pub struct MountMiddleware<M: Middleware> {
+pub struct MountMiddleware<M> {
     path: String,
     middleware: M,
 }
 
-impl<M> Middleware for MountMiddleware<M>
+impl<S, M> Middleware<S> for MountMiddleware<M>
 where
-    M: Middleware,
+    S: 'static,
+    M: Middleware<S>,
 {
-    fn handle(&self, mut req: Request, res: Response, ctx: Context, next: Next) -> WebFuture {
+    fn handle(&self, mut req: Request, res: Response, ctx: S, next: Next<S>) -> WebFuture {
         if req.uri().path().starts_with(self.path.as_str()) {
             let uri_before = req.uri().clone();
 
@@ -72,7 +73,7 @@ where
     }
 }
 
-pub fn mount<M: Middleware>(path: &str, mw: M) -> MountMiddleware<M> {
+pub fn mount<S, M: Middleware<S>>(path: &str, mw: M) -> MountMiddleware<M> {
     MountMiddleware {
         path: path.to_owned(),
         middleware: mw,
@@ -81,7 +82,7 @@ pub fn mount<M: Middleware>(path: &str, mw: M) -> MountMiddleware<M> {
 
 #[cfg(test)]
 mod tests {
-    use ctx::background;
+    use ctx::{background, Context};
     use {default_fallback, mount, App};
     use hyper::{Request, Response};
     use hyper::{Method, Uri};
@@ -91,7 +92,7 @@ mod tests {
 
     #[test]
     fn combine() {
-        let mut app = App::new();
+        let mut app = App::<Context>::new();
         app.add(combine!(|_, res, _, _| Ok(res), |_, res, _, _| Ok(res)));
     }
 

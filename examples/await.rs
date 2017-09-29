@@ -14,6 +14,8 @@ use std::time::Duration;
 use tokio_timer::Timer;
 use web::*;
 
+type Next = web::Next<Context>;
+
 #[async]
 fn handler(_: Request, mut res: Response, _: Context, _: Next) -> Result<Response, HttpError> {
     // Set a timeout that expires in 100 milliseconds

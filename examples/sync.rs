@@ -1,5 +1,4 @@
 extern crate ctx;
-extern crate futures;
 extern crate futures_cpupool;
 extern crate hyper;
 extern crate web;
@@ -10,7 +9,6 @@ use std::thread;
 use std::time::Duration;
 use web::*;
 use futures_cpupool::CpuPool;
-use futures::future::Future;
 
 fn main() {
     let pool = CpuPool::new(32);
@@ -21,11 +19,10 @@ fn main() {
 
         pool.spawn_fn(|| {
             thread::sleep(Duration::from_millis(1000));
-            Ok(())
-        }).and_then(|_| {
-                res.set_body("Hello World!");
-                Ok(res)
-            })
+
+            res.set_body("Hello World!");
+            Ok(res)
+        })
     });
 
     let app = app.build();
