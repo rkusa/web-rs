@@ -3,6 +3,10 @@
 extern crate ctx;
 extern crate futures;
 extern crate hyper;
+#[cfg(feature = "json")]
+extern crate serde;
+#[cfg(feature = "json")]
+extern crate serde_json;
 
 use std::boxed::FnBox;
 use std::sync::Arc;

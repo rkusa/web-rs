@@ -1,7 +1,8 @@
 use std::str::FromStr;
 
-use hyper::Uri;
-use {Middleware, Next, Request, Response, WebFuture};
+use hyper::{Uri, StatusCode};
+use hyper::header::ContentType;
+use {Middleware, Next, Request, Response, WebFuture, HttpError};
 
 #[macro_export]
 macro_rules! combine {
@@ -78,6 +79,26 @@ pub fn mount<S, M: Middleware<S>>(path: &str, mw: M) -> MountMiddleware<M> {
         path: path.to_owned(),
         middleware: mw,
     }
+}
+
+
+#[cfg(feature = "json")]
+impl From<::serde_json::Error> for HttpError {
+    fn from(err: ::serde_json::Error) -> Self {
+        eprintln!("Error converting to json: {}", err);
+        HttpError::Status(StatusCode::BadRequest)
+    }
+}
+
+#[cfg(feature = "json")]
+pub fn json_response<T>(res: Response, data: T) -> Result<Response, HttpError>
+where
+    T: ::serde::Serialize,
+{
+    use serde_json as json;
+
+    let body = json::to_string(&data)?;
+    Ok(res.with_header(ContentType::json()).with_body(body))
 }
 
 #[cfg(test)]
