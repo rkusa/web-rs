@@ -9,6 +9,7 @@ extern crate serde;
 extern crate serde_json;
 
 use std::boxed::FnBox;
+use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 
 pub use ctx::{background, Context};
@@ -82,9 +83,7 @@ pub struct AppBuilder<S> {
 
 impl<S> AppBuilder<S> {
     pub fn new() -> Self {
-        AppBuilder {
-            middlewares: Vec::new(),
-        }
+        AppBuilder { middlewares: Vec::new() }
     }
 
     pub fn add<M>(&mut self, middleware: M)
@@ -95,9 +94,7 @@ impl<S> AppBuilder<S> {
     }
 
     pub fn build(self) -> App<S> {
-        App {
-            middlewares: Arc::new(self.middlewares),
-        }
+        App { middlewares: Arc::new(self.middlewares) }
     }
 }
 
@@ -107,9 +104,7 @@ pub struct App<S> {
 
 impl<S> Clone for App<S> {
     fn clone(&self) -> Self {
-        App {
-            middlewares: self.middlewares.clone(),
-        }
+        App { middlewares: self.middlewares.clone() }
     }
 }
 
@@ -148,7 +143,7 @@ impl<S> App<S> {
 impl<S> Middleware<S> for App<S>
 where
     S: 'static,
-    {
+{
     fn handle(&self, req: Request, res: Response, state: S, next: Next<S>) -> WebFuture {
         self.execute(req, res, state, next)
     }
@@ -225,10 +220,20 @@ where
 
     fn call(&self, req: Self::Request) -> Self::Future {
         let state = (self.state)();
-        let resp = self.app
-            .execute(req, Response::default(), state, default_fallback)
-            .or_else(|err| future::ok(err.into_response()));
-        Box::new(resp)
+        let app = self.app.clone();
+        let resp = AssertUnwindSafe(future::lazy(move || {
+            app.execute(req, Response::default(), state, default_fallback)
+                .or_else(|err| future::ok(err.into_response()))
+        }));
+        Box::new(resp.catch_unwind().then(|result| match result {
+            Ok(res) => res,
+            Err(_) => {
+                eprintln!("CATCH UNWIND");
+                Ok(Response::default().with_status(
+                    StatusCode::InternalServerError,
+                ))
+            }
+        }))
     }
 }
 

@@ -35,13 +35,11 @@ fn main() {
     app.add(|req, res, ctx, next: Next| {
         let timer = Timer::default();
         let sleep = timer.sleep(Duration::from_millis(1000));
-        sleep.select2(next(req, res, ctx)).then(|res| {
-            match res {
-                Ok(Either::A(_)) => Ok(Response::default().with_status(StatusCode::RequestTimeout)),
-                Ok(Either::B((res, _))) => Ok(res),
-                Err(Either::A((err, _))) => panic!(err),
-                Err(Either::B((err, _))) => Err(err),
-            }
+        sleep.select2(next(req, res, ctx)).then(|res| match res {
+            Ok(Either::A(_)) => Ok(Response::default().with_status(StatusCode::RequestTimeout)),
+            Ok(Either::B((res, _))) => Ok(res),
+            Err(Either::A((err, _))) => panic!(err),
+            Err(Either::B((err, _))) => Err(err),
         })
     });
     app.add(handler);
