@@ -26,18 +26,19 @@ pub use helper::*;
 
 pub type Request = hyper::Request<Body>;
 pub type Response = http::response::Builder;
-pub type ResponseResult = Result<hyper::Response<Body>, HttpError>;
+pub type HttpResponse = hyper::Response<Body>;
+pub type ResponseResult = Result<HttpResponse, HttpError>;
 
-pub struct ResponseFuture {
-    inner: Box<Future<Item = hyper::Response<Body>, Error = HttpError> + Send>,
+pub struct ResponseFuture<E = HttpError> {
+    inner: Box<Future<Item = HttpResponse, Error = E> + Send>,
 }
 
 pub trait Middleware<S>: Send + Sync {
     fn handle(&self, Request, Response, S, Next<S>) -> ResponseFuture;
 }
 
-pub trait IntoResponse {
-    fn into_response(self) -> Result<hyper::Response<Body>, HttpError>;
+pub trait IntoResponse<E> {
+    fn into_response(self) -> Result<HttpResponse, E>;
 }
 
 pub struct AppBuilder<S> {
@@ -66,7 +67,7 @@ where
     state_factory: Arc<F>,
 }
 
-pub fn done<R: IntoResponse>(res: R) -> ResponseFuture {
+pub fn done<R: IntoResponse<HttpError>>(res: R) -> ResponseFuture {
     let res = res.into_response();
     res.into()
 }
@@ -77,10 +78,10 @@ fn default_fallback<S>(_req: Request, _res: Response, _state: S) -> ResponseFutu
     res.into()
 }
 
-impl ResponseFuture {
-    fn new<F>(fut: F) -> Self
+impl<E> ResponseFuture<E> {
+    pub fn new<F>(fut: F) -> Self
     where
-        F: Future<Item = hyper::Response<Body>, Error = HttpError> + Send + 'static,
+        F: Future<Item = HttpResponse, Error = E> + Send + 'static,
     {
         Self {
             inner: Box::new(fut),
@@ -88,9 +89,9 @@ impl ResponseFuture {
     }
 }
 
-impl Future for ResponseFuture {
-    type Item = hyper::Response<Body>;
-    type Error = HttpError;
+impl<E> Future for ResponseFuture<E> {
+    type Item = HttpResponse;
+    type Error = E;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         self.inner.poll()
@@ -101,7 +102,7 @@ impl<S, F, B, I> Middleware<S> for F
 where
     F: Send + Sync + Fn(Request, Response, S, Next<S>) -> B,
     B: IntoFuture<Item = I, Error = HttpError>,
-    I: IntoResponse,
+    I: IntoResponse<HttpError>,
     <B as futures::IntoFuture>::Future: Send + 'static,
 {
     fn handle(&self, req: Request, res: Response, state: S, next: Next<S>) -> ResponseFuture {
@@ -250,26 +251,26 @@ where
     }
 }
 
-impl IntoResponse for Response {
-    fn into_response(mut self) -> Result<hyper::Response<Body>, HttpError> {
-        self.body(Body::empty()).map_err(HttpError::Http)
+impl<E> IntoResponse<E> for Response where E: From<http::Error> {
+    fn into_response(mut self) -> Result<HttpResponse, E> {
+        self.body(Body::empty()).map_err(E::from)
     }
 }
 
-impl<P: Into<Body>> IntoResponse for hyper::Response<P> {
-    fn into_response(self) -> Result<hyper::Response<Body>, HttpError> {
+impl<E, P> IntoResponse<E> for hyper::Response<P> where E: From<http::Error>, P: Into<Body> {
+    fn into_response(self) -> Result<HttpResponse, E> {
         let (parts, body) = self.into_parts();
         let res = hyper::Response::from_parts(parts, body.into());
         Ok(res)
     }
 }
 
-impl<P, E> IntoResponse for Result<hyper::Response<P>, E>
+impl<P, E1, E2> IntoResponse<E1> for Result<hyper::Response<P>, E2>
 where
     P: Into<Body>,
-    E: Into<HttpError>,
+    E1: From<E2>,
 {
-    fn into_response(self) -> Result<hyper::Response<Body>, HttpError> {
+    fn into_response(self) -> Result<HttpResponse, E1> {
         match self {
             Ok(res) => {
                 let (parts, body) = res.into_parts();
@@ -281,8 +282,8 @@ where
     }
 }
 
-impl IntoResponse for (Response, &'static str) {
-    fn into_response(self) -> Result<hyper::Response<Body>, HttpError> {
+impl IntoResponse<HttpError> for (Response, &'static str) {
+    fn into_response(self) -> Result<HttpResponse, HttpError> {
         let (mut res, s) = self;
         res.header(CONTENT_TYPE, HeaderValue::from_str("text/plain").unwrap())
             .body(s.into())
@@ -292,7 +293,7 @@ impl IntoResponse for (Response, &'static str) {
 
 impl<R> From<R> for ResponseFuture
 where
-    R: IntoResponse,
+    R: IntoResponse<HttpError>,
 {
     fn from(r: R) -> Self {
         let res = r.into_response();
