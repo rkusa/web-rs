@@ -35,7 +35,7 @@ fn main() {
             Ok(Either::A(_)) => Response::new()
                 .status(StatusCode::REQUEST_TIMEOUT)
                 .body(Body::empty())
-                .into_response(),
+                .into_http_response(),
             Ok(Either::B((res, _))) => Ok(res),
             Err(Either::A((err, _))) => panic!(err),
             Err(Either::B((err, _))) => Err(err),

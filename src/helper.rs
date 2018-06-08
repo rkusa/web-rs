@@ -60,7 +60,7 @@ where
 
             *req.uri_mut() = new_uri;
 
-            ResponseFuture::new(self.middleware.handle(
+            Box::new(self.middleware.handle(
                 req,
                 res,
                 ctx,

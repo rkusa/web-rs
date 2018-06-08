@@ -8,7 +8,7 @@ use web::*;
 fn main() {
     let mut app = App::new();
 
-    app.add(|_req, mut res: Response, _ctx, _next| done(res.body("Hello World!")));
+    app.add(|_req, mut res: Response, _ctx, _next| res.body("Hello World!"));
 
     let app = app.build();
     let addr = ([127, 0, 0, 1], 3000).into();

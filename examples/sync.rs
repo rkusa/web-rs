@@ -17,7 +17,7 @@ fn main() {
         pool.spawn_fn(move || {
             thread::sleep(Duration::from_millis(1000));
 
-            res.body("Hello World!").into_response()
+            res.body("Hello World!").into_http_response() as ResponseResult
         })
     });
 

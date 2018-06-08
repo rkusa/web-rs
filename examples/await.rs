@@ -22,7 +22,7 @@ fn handler(_: Request, mut res: Response, _: (), _: Next) -> ResponseResult {
         return Err(StatusCode::REQUEST_TIMEOUT.into());
     }
 
-    res.body("Hello World!").into_response()
+    res.body("Hello World!").into_http_response()
 }
 
 fn main() {
