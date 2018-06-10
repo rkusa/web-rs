@@ -66,6 +66,7 @@ where
     app: App<S>,
     state_factory: Arc<F>,
 }
+
 fn default_fallback<S, E>(_req: Request, _res: Response, _state: S) -> ResponseFuture<E>
 where
     E: From<http::Error> + Send + 'static,
@@ -90,12 +91,6 @@ impl<S> AppBuilder<S>
 where
     S: Send,
 {
-    pub fn new() -> Self {
-        AppBuilder {
-            middlewares: Vec::new(),
-        }
-    }
-
     pub fn add<M>(&mut self, middleware: M)
     where
         M: Middleware<S> + 'static,
@@ -110,12 +105,20 @@ where
     }
 }
 
+impl<S> Default for AppBuilder<S> {
+    fn default() -> Self {
+        AppBuilder {
+            middlewares: Vec::new(),
+        }
+    }
+}
+
 impl<S> App<S>
 where
     S: Send,
 {
     pub fn new() -> AppBuilder<S> {
-        AppBuilder::new()
+        AppBuilder::default()
     }
 
     pub fn execute<N>(&self, req: Request, res: Response, state: S, next: N) -> ResponseFuture

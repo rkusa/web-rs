@@ -45,7 +45,7 @@ where
                 }
 
                 let (_, mut new_path) = uri_before.path().split_at(self.path.len());
-                if new_path.len() == 0 {
+                if new_path.is_empty() {
                     new_path = "/";
                 }
                 s += new_path;
