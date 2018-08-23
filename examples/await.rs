@@ -1,11 +1,11 @@
-#![feature(proc_macro, generators)]
+#![feature(generators)]
 
 extern crate futures_await as futures;
 extern crate hyper;
 extern crate tokio_timer;
 extern crate web;
 
-use futures::prelude::*;
+use futures::prelude::{async, await, Future};
 use hyper::StatusCode;
 use std::time::Duration;
 use tokio_timer::sleep;
@@ -19,7 +19,7 @@ fn handler(_: Request, mut res: Response, _: (), _: Next) -> ResponseResult {
     let sleep = sleep(Duration::from_millis(100));
 
     if let Err(_) = await!(sleep) {
-        return Err(StatusCode::REQUEST_TIMEOUT.into());
+        return Err(Error::from(HttpError::Status(StatusCode::REQUEST_TIMEOUT)));
     }
 
     res.body("Hello World!").into_http_response()

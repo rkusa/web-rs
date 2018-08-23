@@ -1,51 +1,39 @@
-use std::error::Error as StdError;
-use std::fmt;
+use std::sync::Mutex;
 
-use http;
 pub use hyper::StatusCode;
 use hyper::{Body, Response};
+use {IntoHttpResponse, ResponseResult};
 
-#[derive(Debug)]
+#[derive(Debug, Fail)]
 pub enum HttpError {
+    #[fail(display = "HTTP Error with Status {}", _0)]
     Status(StatusCode),
-    Response(Response<Body>),
-    Http(http::Error),
+    #[fail(display = "HTTP Error with Status {}: {}", _0, _1)]
+    StatusAndReason(StatusCode, String),
+    #[fail(display = "HTTP Error with Response")]
+    Response(Mutex<Response<Body>>),
 }
 
-impl HttpError {
-    pub fn into_response(self) -> Result<Response<Body>, http::Error> {
+impl IntoHttpResponse for HttpError {
+    fn into_http_response(self) -> ResponseResult {
         match self {
             HttpError::Status(status) => {
                 let mut res = Response::builder();
                 res.status(status);
-                if let Some(reason) = status.canonical_reason() {
-                    res.body(reason.into())
+                let res = if let Some(reason) = status.canonical_reason() {
+                    res.body(reason.into())?
                 } else {
-                    res.body(Body::empty())
-                }
+                    res.body(Body::empty())?
+                };
+                Ok(res)
             }
-            HttpError::Response(resp) => Ok(resp),
-            HttpError::Http(err) => Err(err),
-        }
-    }
-}
-
-impl fmt::Display for HttpError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            HttpError::Status(ref status) => write!(f, "Error with status: {}", status),
-            HttpError::Response(ref resp) => write!(f, "Error with response:\n{:?}", resp),
-            HttpError::Http(ref err) => write!(f, "Error with http:\n{:?}", err),
-        }
-    }
-}
-
-impl StdError for HttpError {
-    fn description(&self) -> &str {
-        match *self {
-            HttpError::Status(_) => "Error with status code",
-            HttpError::Response(_) => "Error with response",
-            HttpError::Http(_) => "Error with http",
+            HttpError::StatusAndReason(status, reason) => {
+                let mut res = Response::builder();
+                res.status(status);
+                let res = res.body(reason.into())?;
+                Ok(res)
+            }
+            HttpError::Response(resp) => Ok(resp.into_inner().unwrap()),
         }
     }
 }
@@ -56,9 +44,9 @@ impl From<StatusCode> for HttpError {
     }
 }
 
-impl From<http::Error> for HttpError {
-    fn from(err: http::Error) -> Self {
-        HttpError::Http(err)
+impl From<Response<Body>> for HttpError {
+    fn from(res: Response<Body>) -> Self {
+        HttpError::Response(Mutex::new(res))
     }
 }
 

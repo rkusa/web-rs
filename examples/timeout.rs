@@ -1,12 +1,12 @@
-#![feature(proc_macro, generators)]
+#![feature(generators)]
 
 extern crate futures_await as futures;
 extern crate hyper;
 extern crate tokio_timer;
 extern crate web;
 
-use futures::future::Either;
-use futures::prelude::*;
+use futures::future::{Either, Future};
+use futures::prelude::{async, await};
 use futures::sync::oneshot;
 use hyper::{Body, StatusCode};
 use std::time::Duration;

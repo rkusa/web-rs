@@ -3,7 +3,7 @@ extern crate hyper;
 extern crate tokio_timer;
 extern crate web;
 
-use futures::future::Future;
+use futures::prelude::*;
 use hyper::StatusCode;
 use std::time::Duration;
 use tokio_timer::sleep;
@@ -17,8 +17,8 @@ fn main() {
         let sleep = sleep(Duration::from_millis(100));
 
         sleep
-            .map_err(|_| HttpError::Status(StatusCode::REQUEST_TIMEOUT))
-            .and_then(move |_| res.body("Hello World!").map_err(HttpError::Http))
+            .map_err(|_| Error::from(HttpError::Status(StatusCode::REQUEST_TIMEOUT)))
+            .and_then(move |_| res.body("Hello World!").map_err(|err| err.into()))
     });
 
     let app = app.build();

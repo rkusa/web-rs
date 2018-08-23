@@ -1,5 +1,6 @@
 use std::str::FromStr;
 
+use failure::Error;
 use hyper::body::Body;
 use hyper::header::{HeaderValue, CONTENT_TYPE};
 use hyper::{StatusCode, Uri};
@@ -91,18 +92,18 @@ impl From<::serde_json::Error> for HttpError {
 }
 
 #[cfg(feature = "json")]
-pub fn json_response<T>(mut res: Response, data: T) -> Result<::hyper::Response<Body>, HttpError>
+pub fn json_response<T>(mut res: Response, data: T) -> Result<::hyper::Response<Body>, Error>
 where
     T: ::serde::Serialize,
 {
     use serde_json as json;
 
     let body = json::to_string(&data)?;
-    res.header(
+    let res = res.header(
         CONTENT_TYPE,
         HeaderValue::from_str("application/json").unwrap(),
-    ).body(body.into())
-        .map_err(HttpError::Http)
+    ).body(body.into())?;
+    Ok(res)
 }
 
 #[cfg(test)]
