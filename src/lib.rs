@@ -1,8 +1,5 @@
 #![feature(fnbox, unboxed_closures, fn_traits)]
-#![warn(bare_trait_objects)]
 
-#[macro_use]
-extern crate failure;
 extern crate futures;
 extern crate http;
 extern crate hyper;
@@ -15,7 +12,6 @@ use std::boxed::FnBox;
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 
-pub use failure::{Compat, Error};
 use futures::{future, Future, IntoFuture};
 use hyper::header::{HeaderValue, CONTENT_TYPE};
 use hyper::service::Service;
@@ -31,35 +27,35 @@ pub use helper::*;
 pub type Request = hyper::Request<Body>;
 pub type Response = http::response::Builder;
 pub type HttpResponse = hyper::Response<Body>;
-pub type ResponseResult = Result<HttpResponse, Error>;
+pub type ResponseResult<E = HttpError> = Result<HttpResponse, E>;
 
 // TODO: maybe use trait alias once https://github.com/rust-lang/rust/issues/41517 lands
 // pub type ResponseFuture<E = HttpError> = Future<Item = HttpResponse, Error = E> + Send;
-pub type ResponseFuture = Box<dyn Future<Item = HttpResponse, Error = Error> + Send>;
+pub type ResponseFuture<E = HttpError> = Box<Future<Item = HttpResponse, Error = E> + Send>;
 
 pub trait Middleware<S>: Send + Sync {
     fn handle(&self, Request, Response, S, Next<S>) -> ResponseFuture;
 }
 
-pub trait IntoResponse {
-    fn into_response(self) -> ResponseFuture;
+pub trait IntoResponse<E = HttpError> {
+    fn into_response(self) -> ResponseFuture<E>;
 }
 
 pub struct AppBuilder<S> {
-    middlewares: Vec<Box<dyn Middleware<S>>>,
+    middlewares: Vec<Box<Middleware<S>>>,
 }
 
 pub struct App<S>
 where
     S: Send,
 {
-    middlewares: Arc<Vec<Box<dyn Middleware<S>>>>,
+    middlewares: Arc<Vec<Box<Middleware<S>>>>,
 }
 
 pub struct Next<S> {
     pos: usize,
-    middlewares: Arc<Vec<Box<dyn Middleware<S>>>>,
-    finally: Box<dyn FnBox(Request, Response, S) -> ResponseFuture + Send>,
+    middlewares: Arc<Vec<Box<Middleware<S>>>>,
+    finally: Box<FnBox(Request, Response, S) -> ResponseFuture + Send>,
 }
 
 pub struct Serve<S, F>
@@ -71,16 +67,19 @@ where
     state_factory: Arc<F>,
 }
 
-fn default_fallback<S>(_req: Request, _res: Response, _state: S) -> ResponseFuture {
+fn default_fallback<S, E>(_req: Request, _res: Response, _state: S) -> ResponseFuture<E>
+where
+    E: From<http::Error> + Send + 'static,
+{
     let mut res = Response::new();
     res.status(StatusCode::NOT_FOUND);
-    Ok::<_, Error>(res).into_response()
+    Ok(res).into_response()
 }
 
 impl<S, F, B> Middleware<S> for F
 where
     F: Send + Sync + Fn(Request, Response, S, Next<S>) -> B,
-    B: IntoResponse,
+    B: IntoResponse<HttpError>,
 {
     fn handle(&self, req: Request, res: Response, state: S, next: Next<S>) -> ResponseFuture {
         let fut = (self)(req, res, state, next).into_response();
@@ -205,106 +204,102 @@ where
 {
     type ReqBody = Body;
     type ResBody = Body;
-    type Error = Compat<Error>;
-    type Future =
-        Box<dyn Future<Item = hyper::Response<Self::ResBody>, Error = Self::Error> + Send>;
+    type Error = http::Error;
+    type Future = Box<Future<Item = hyper::Response<Self::ResBody>, Error = Self::Error> + Send>;
 
     fn call(&mut self, req: hyper::Request<Self::ReqBody>) -> Self::Future {
         let state = (self.state_factory)();
         let app = self.app.clone();
         let resp = AssertUnwindSafe(future::lazy(move || {
             app.execute(req, Response::default(), state, default_fallback)
-                .or_else(|err| {
-                    match err.downcast::<HttpError>() {
-                        Ok(err) => err.into_http_response(),
-                        Err(_err) => {
-                            // TODO: Error output
-                            Ok(internal_server_error())
-                        }
-                    }
-                })
-                .map_err(|err| err.compat())
+                .or_else(|err| err.into_response())
         }));
         Box::new(resp.catch_unwind().then(|result| match result {
             Ok(res) => res,
             Err(_) => {
                 eprintln!("CATCH UNWIND");
-                Ok(internal_server_error())
+                Ok(Response::new()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .body(Body::empty())
+                    .unwrap())
             }
         }))
     }
 }
 
 // TODO: better/shorter name?
-pub trait IntoHttpResponse {
-    fn into_http_response(self) -> ResponseResult;
+pub trait IntoHttpResponse<E=HttpError> {
+    fn into_http_response(self) -> ResponseResult<E>;
 }
 
-impl IntoHttpResponse for Response {
-    fn into_http_response(mut self) -> ResponseResult {
-        Ok(self.body(Body::empty())?)
+impl<E> IntoHttpResponse<E> for Response
+where
+    E: From<http::Error> + Send + 'static,
+{
+    fn into_http_response(mut self) -> ResponseResult<E> {
+        self.body(Body::empty()).map_err(E::from)
     }
 }
 
-impl<P> IntoHttpResponse for hyper::Response<P>
+impl<E, P> IntoHttpResponse<E> for hyper::Response<P>
 where
+    E: From<http::Error> + Send + 'static,
     P: Into<Body>,
 {
-    fn into_http_response(self) -> ResponseResult {
+    fn into_http_response(self) -> ResponseResult<E> {
         let (parts, body) = self.into_parts();
         Ok(hyper::Response::from_parts(parts, body.into()))
     }
 }
 
-impl<P, E> IntoHttpResponse for Result<hyper::Response<P>, E>
+impl<P, E1, E2> IntoHttpResponse<E1> for Result<hyper::Response<P>, E2>
 where
     P: Into<Body>,
-    E: Into<Error>,
+    E1: From<E2> + Send + 'static,
 {
-    fn into_http_response(self) -> ResponseResult {
-        self.map(|res| {
-            let (parts, body) = res.into_parts();
-            let res = hyper::Response::from_parts(parts, body.into());
-            res
-        }).map_err(|err| err.into())
+    fn into_http_response(self) -> ResponseResult<E1> {
+        match self {
+            Ok(res) => {
+                let (parts, body) = res.into_parts();
+                let res = hyper::Response::from_parts(parts, body.into());
+                Ok(res)
+            }
+            Err(err) => Err(err.into()),
+        }
     }
 }
 
-impl IntoHttpResponse for (Response, &'static str) {
-    fn into_http_response(self) -> ResponseResult {
-        let (mut res, s) = self;
-        res.header(CONTENT_TYPE, HeaderValue::from_str("text/plain").unwrap())
-            .body(s.into())
-            .map_err(|err| err.into())
-    }
-}
-
-impl<F, I, E> IntoResponse for F
+impl<F, I, E1, E2> IntoResponse<E1> for F
 where
-    F: IntoFuture<Item = I, Error = E> + Send + 'static,
-    I: IntoHttpResponse + 'static,
-    E: Into<Error> + 'static,
+    F: IntoFuture<Item = I, Error = E2> + Send + 'static,
+    I: IntoHttpResponse<E2> + 'static,
+    E1: From<E2> + Send + 'static,
+    E2: Send + 'static,
     <F as futures::IntoFuture>::Future: Send,
 {
-    fn into_response(self) -> ResponseFuture {
+    fn into_response(self) -> ResponseFuture<E1> {
         Box::new(
             self.into_future()
-                .map_err(|err| err.into())
-                .and_then(I::into_http_response),
+                .and_then(I::into_http_response)
+                .from_err(),
         )
     }
 }
 
-fn internal_server_error() -> HttpResponse {
-    Response::new()
-        .status(StatusCode::INTERNAL_SERVER_ERROR)
-        .body(Body::empty())
-        .unwrap()
+impl<E> IntoHttpResponse<E> for (Response, &'static str)
+where
+    E: From<http::Error> + Send + 'static,
+{
+    fn into_http_response(self) -> ResponseResult<E> {
+        let (mut res, s) = self;
+        res.header(CONTENT_TYPE, HeaderValue::from_str("text/plain").unwrap())
+            .body(s.into())
+            .map_err(E::from)
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use failure::Error;
     use futures::{Future, IntoFuture};
     use hyper::{self, Body, StatusCode};
     use std::sync::{Arc, Mutex};
@@ -318,9 +313,7 @@ mod tests {
     #[test]
     fn closure_middleware() {
         let mut app = App::new();
-        app.add(|_req, mut res: Response, _state: (), _next| {
-            res.body("Hello World!").into_response()
-        });
+        app.add(|_req, mut res: Response, _state: (), _next| res.body("Hello World!"));
     }
 
     #[test]
@@ -335,7 +328,7 @@ mod tests {
                 _state: (),
                 _next: Next,
             ) -> ResponseFuture {
-                Ok::<_, Error>(res).into_response()
+                Ok::<_, HttpError>(res).into_response()
             }
         }
 
@@ -435,7 +428,7 @@ mod tests {
             mut res: Response,
             _state: (),
             _next: Next,
-        ) -> impl Future<Item = HttpResponse, Error = Error> {
+        ) -> impl Future<Item = HttpResponse, Error = HttpError> {
             res.body(Body::empty()).into_future().from_err()
         }
 

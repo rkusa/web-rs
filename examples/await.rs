@@ -19,7 +19,7 @@ fn handler(_: Request, mut res: Response, _: (), _: Next) -> ResponseResult {
     let sleep = sleep(Duration::from_millis(100));
 
     if let Err(_) = await!(sleep) {
-        return Err(Error::from(HttpError::Status(StatusCode::REQUEST_TIMEOUT)));
+        return Err(StatusCode::REQUEST_TIMEOUT.into());
     }
 
     res.body("Hello World!").into_http_response()

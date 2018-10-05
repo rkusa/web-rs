@@ -17,8 +17,8 @@ fn main() {
         let sleep = sleep(Duration::from_millis(100));
 
         sleep
-            .map_err(|_| Error::from(HttpError::Status(StatusCode::REQUEST_TIMEOUT)))
-            .and_then(move |_| res.body("Hello World!").map_err(|err| err.into()))
+            .map_err(|_| HttpError::Status(StatusCode::REQUEST_TIMEOUT))
+            .and_then(move |_| res.body("Hello World!").map_err(HttpError::Http))
     });
 
     let app = app.build();
