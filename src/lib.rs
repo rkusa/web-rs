@@ -1,4 +1,4 @@
-#![feature(fnbox, unboxed_closures, fn_traits)]
+#![feature(unboxed_closures, fn_traits)]
 
 extern crate futures;
 extern crate http;
@@ -8,7 +8,6 @@ extern crate serde;
 #[cfg(feature = "json")]
 extern crate serde_json;
 
-use std::boxed::FnBox;
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 
@@ -31,10 +30,10 @@ pub type ResponseResult<E = HttpError> = Result<HttpResponse, E>;
 
 // TODO: maybe use trait alias once https://github.com/rust-lang/rust/issues/41517 lands
 // pub type ResponseFuture<E = HttpError> = Future<Item = HttpResponse, Error = E> + Send;
-pub type ResponseFuture<E = HttpError> = Box<Future<Item = HttpResponse, Error = E> + Send>;
+pub type ResponseFuture<E = HttpError> = Box<dyn Future<Item = HttpResponse, Error = E> + Send>;
 
 pub trait Middleware<S>: Send + Sync {
-    fn handle(&self, Request, Response, S, Next<S>) -> ResponseFuture;
+    fn handle(&self, req: Request, res: Response, state: S, state: Next<S>) -> ResponseFuture;
 }
 
 pub trait IntoResponse<E = HttpError> {
@@ -42,20 +41,20 @@ pub trait IntoResponse<E = HttpError> {
 }
 
 pub struct AppBuilder<S> {
-    middlewares: Vec<Box<Middleware<S>>>,
+    middlewares: Vec<Box<dyn Middleware<S>>>,
 }
 
 pub struct App<S>
 where
     S: Send,
 {
-    middlewares: Arc<Vec<Box<Middleware<S>>>>,
+    middlewares: Arc<Vec<Box<dyn Middleware<S>>>>,
 }
 
 pub struct Next<S> {
     pos: usize,
-    middlewares: Arc<Vec<Box<Middleware<S>>>>,
-    finally: Box<FnBox(Request, Response, S) -> ResponseFuture + Send>,
+    middlewares: Arc<Vec<Box<dyn Middleware<S>>>>,
+    finally: Box<dyn FnOnce(Request, Response, S) -> ResponseFuture + Send>,
 }
 
 pub struct Serve<S, F>
@@ -205,7 +204,8 @@ where
     type ReqBody = Body;
     type ResBody = Body;
     type Error = http::Error;
-    type Future = Box<Future<Item = hyper::Response<Self::ResBody>, Error = Self::Error> + Send>;
+    type Future =
+        Box<dyn Future<Item = hyper::Response<Self::ResBody>, Error = Self::Error> + Send>;
 
     fn call(&mut self, req: hyper::Request<Self::ReqBody>) -> Self::Future {
         let state = (self.state_factory)();
@@ -228,7 +228,7 @@ where
 }
 
 // TODO: better/shorter name?
-pub trait IntoHttpResponse<E=HttpError> {
+pub trait IntoHttpResponse<E = HttpError> {
     fn into_http_response(self) -> ResponseResult<E>;
 }
 

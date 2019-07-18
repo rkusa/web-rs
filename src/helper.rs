@@ -1,9 +1,9 @@
 use std::str::FromStr;
 
+use crate::{HttpError, Middleware, Next, Request, Response, ResponseFuture};
 use hyper::body::Body;
 use hyper::header::{HeaderValue, CONTENT_TYPE};
 use hyper::{StatusCode, Uri};
-use {HttpError, Middleware, Next, Request, Response, ResponseFuture};
 
 #[macro_export]
 macro_rules! combine {
@@ -101,8 +101,9 @@ where
     res.header(
         CONTENT_TYPE,
         HeaderValue::from_str("application/json").unwrap(),
-    ).body(body.into())
-        .map_err(HttpError::Http)
+    )
+    .body(body.into())
+    .map_err(HttpError::Http)
 }
 
 #[cfg(test)]
